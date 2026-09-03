@@ -1,0 +1,60 @@
+name: Native libs smoke test
+
+# Standalone validator for scripts/build-native-deps.sh, decoupled from the
+# full release pipeline so the (likely to need iteration) cross-compile
+# chain can be debugged without cutting a release each time.
+#
+# Manual trigger only -- this is expected to fail on first few runs while
+# the glib/json-glib/babl/gegl meson flags get tuned for Android; see
+# README.md "Known risk areas".
+
+on:
+  workflow_dispatch:
+    inputs:
+      abi:
+        description: "Target ABI"
+        required: true
+        default: "arm64-v8a"
+        type: choice
+        options:
+          - arm64-v8a
+          - armeabi-v7a
+          - x86_64
+      api_level:
+        description: "Android API level (must match app/build.gradle.kts minSdk)"
+        required: true
+        default: "26"
+
+jobs:
+  build-native-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config ninja-build
+          pip install --user meson
+
+      - name: Locate NDK
+        run: |
+          NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          if [ -z "$NDK_HOME" ]; then
+            echo "No NDK found on runner image (expected ANDROID_NDK_LATEST_HOME)." >&2
+            exit 1
+          fi
+          echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
+          echo "Using NDK at $NDK_HOME"
+
+      - name: Build glib -> json-glib -> babl -> gegl for ${{ inputs.abi }}
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build-native-deps.sh "${{ inputs.abi }}" "${{ inputs.api_level }}" "${{ github.workspace }}/native-prefix"
+
+      - name: Upload prefix as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-prefix-${{ inputs.abi }}
+          path: native-prefix/
+          retention-days: 7

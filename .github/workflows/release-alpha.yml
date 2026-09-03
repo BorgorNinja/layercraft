@@ -1,0 +1,125 @@
+name: Release Alpha
+
+# Full pipeline: cross-compile the native GEGL/babl stack, build the debug
+# APK against it, publish as a GitHub Release marked prerelease.
+#
+# NOTE: this depends on scripts/build-native-deps.sh succeeding, which has
+# not been validated end-to-end yet (see native-libs.yml + README.md
+# "Known risk areas"). Run native-libs.yml manually first to shake out
+# cross-compile issues before trusting this to produce a real GEGL-backed
+# build -- if the native step fails here, job build-apk still runs and
+# produces a stub-engine APK (UI only, no image processing) rather than
+# blocking the release entirely.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version name for this alpha build (e.g. 0.1.0-alpha)"
+        required: true
+        default: "0.1.0-alpha"
+  push:
+    tags:
+      - "v*-alpha*"
+
+jobs:
+  native-deps:
+    runs-on: ubuntu-latest
+    continue-on-error: true # release should still ship a stub-engine APK if this fails
+    outputs:
+      succeeded: ${{ steps.mark.outputs.succeeded }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config ninja-build
+          pip install --user meson
+
+      - name: Locate NDK
+        run: |
+          NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          if [ -z "$NDK_HOME" ]; then
+            echo "No NDK found on runner image." >&2
+            exit 1
+          fi
+          echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
+
+      - name: Build native dependency chain (arm64-v8a)
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build-native-deps.sh arm64-v8a 26 "${{ github.workspace }}/native-prefix"
+
+      - name: Upload prefix
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-prefix-arm64-v8a
+          path: native-prefix/
+          retention-days: 7
+
+      - id: mark
+        if: always()
+        run: echo "succeeded=${{ job.status == 'success' }}" >> "$GITHUB_OUTPUT"
+
+  build-apk:
+    needs: native-deps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download native prefix
+        if: needs.native-deps.outputs.succeeded == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: native-prefix-arm64-v8a
+          path: native-prefix/
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Bootstrap Gradle wrapper
+        run: gradle wrapper --gradle-version 8.7
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="${{ inputs.version }}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Build debug APK
+        run: |
+          if [ -d native-prefix ] && [ "$(ls -A native-prefix 2>/dev/null)" ]; then
+            EXTRA_ARG="-PnativeDepsPrefix=${{ github.workspace }}/native-prefix"
+            echo "Building with GEGL linked ($EXTRA_ARG)"
+          else
+            EXTRA_ARG=""
+            echo "Building stub engine (native-deps job did not produce a prefix)"
+          fi
+          chmod +x gradlew
+          ./gradlew assembleDebug $EXTRA_ARG
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk \
+             "out/layercraft-alpha-${{ steps.version.outputs.version }}.apk"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          gh release create "$TAG" \
+            "out/layercraft-alpha-${{ steps.version.outputs.version }}.apk" \
+            --title "LayerCraft $TAG" \
+            --prerelease \
+            --notes "Alpha build. Debug-signed, unsigned for public distribution. Native GEGL engine: $( [ -d native-prefix ] && [ "$(ls -A native-prefix 2>/dev/null)" ] && echo 'linked (unverified)' || echo 'NOT linked -- UI-only stub build' )."

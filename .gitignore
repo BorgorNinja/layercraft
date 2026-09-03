@@ -12,3 +12,8 @@
 *.dex
 /app/build
 /app/.cxx
+/native-prefix
+gradlew
+gradlew.bat
+gradle/wrapper/gradle-wrapper.jar
+gradle/wrapper/gradle-wrapper.properties

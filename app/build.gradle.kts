@@ -26,6 +26,13 @@ android {
             cmake {
                 cppFlags += "-std=c++17"
                 arguments += "-DANDROID_STL=c++_shared"
+                // Set via `-PnativeDepsPrefix=/path/to/prefix` (CI passes the
+                // output of scripts/build-native-deps.sh). Unset locally ->
+                // CMakeLists.txt falls back to the no-GEGL stub build.
+                val nativeDepsPrefix = project.findProperty("nativeDepsPrefix") as String?
+                if (nativeDepsPrefix != null) {
+                    arguments += "-DNATIVE_DEPS_PREFIX=$nativeDepsPrefix"
+                }
             }
         }
     }
