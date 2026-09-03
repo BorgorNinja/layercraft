@@ -1,0 +1,167 @@
+# HANDOFF.md
+
+Read this first. It's written so another LLM (or a human) can pick up this
+project cold, in one pass, without re-deriving decisions already made.
+
+## What this project is
+
+Android photo editor to compete with Snapseed but with real layers —
+non-destructive edit stack, drag-to-reorder layers, blend modes, masks.
+Snapseed's gap is the motivation: no layers, no drag-and-drop, limited
+adjustment set.
+
+**Not a GIMP port.** A GIMP-for-Android port was scoped first and rejected
+(see "Rejected approach" below). This project reuses only GIMP's image
+processing engine (GEGL + babl), not GIMP's UI, plug-in system, or app
+architecture.
+
+## Repo
+
+`github.com/BorgorNinja/layercraft` — Kotlin + Jetpack Compose, Android
+`minSdk 26`, `compileSdk 35`. Owner's other Android/web/game projects are
+under the same `BorgorNinja` GitHub account (see that account's other repos
+for house style: Kotlin/Compose for Android, PHP/MySQL for web, Phaser for
+games — this project follows the Android conventions).
+
+## Architecture (current + planned)
+
+| Layer | Tech | Status |
+|---|---|---|
+| UI shell | Kotlin + Jetpack Compose | scaffolded, builds |
+| Canvas/gestures | Compose `PointerInput` + `Canvas` | placeholder only — no image rendering wired up |
+| Edit-stack model | Kotlin data classes (`model/Layer.kt`) | scaffolded |
+| Image processing engine | GEGL + babl via JNI | **written but never compiled or run** |
+| Native dependency chain | glib → json-glib → babl → gegl, cross-compiled for Android via meson | **written but never run** |
+| GPU preview | not started | — |
+| File I/O / project format | not started | — |
+
+## Why GEGL/babl
+
+GEGL is a node-graph, non-destructive image processing library — it
+already models "layers as an adjustable stack," which is the core feature
+gap vs. Snapseed. It and babl (pixel format conversion) are portable C
+with no GTK dependency, unlike the rest of GIMP. This is why they're
+extractable even though a full GIMP port isn't feasible.
+
+## Rejected approach: full GIMP-for-Android port
+
+Studied by forking `GNOME/gimp` (mirrored to `BorgorNinja/gimp`). Findings:
+
+- 1.27M LOC, GTK+3-bound UI (423 files call `gtk_*` directly) — no Android
+  GTK backend exists, and there's no incremental path off GTK.
+- 37 plug-ins ship as separate executable binaries, communicating over
+  pipes via GIMP's PDB (procedure database) IPC. Conflicts with Android's
+  process sandboxing model.
+- Verdict: not portable. GEGL/babl (the processing core) *are* portable
+  and became the basis for this project instead.
+
+Don't re-litigate this — it's a closed question. If asked "why not just
+port GIMP," point here.
+
+## The hard constraint that shapes everything below
+
+**The sandbox this was built in cannot reach:**
+- `dl.google.com` (Android NDK download)
+- `gitlab.gnome.org` / `download.gnome.org` (glib/babl/gegl canonical source)
+
+It *can* reach `github.com`/`api.github.com`/`codeload.github.com`, and
+GNOME mirrors its repos there (`GNOME/glib`, `GNOME/babl`, `GNOME/gegl`,
+`GNOME/json-glib` all confirmed to exist as read-only GitHub mirrors).
+
+**Consequence: nothing involving the NDK or actually compiling the native
+chain has been run or validated.** It was all written correctly per the
+respective tools' documented APIs/flags, but "written correctly" and
+"compiles" are different claims. GitHub Actions runners have full internet
++ a preinstalled NDK (`ANDROID_NDK_LATEST_HOME` env var), so that's where
+this gets tested — not in whatever sandbox is reading this file, most
+likely, unless that sandbox's network access has changed.
+
+**If you're an LLM picking this up: check your own network access before
+assuming you're equally constrained.** If you can reach `gitlab.gnome.org`
+directly, or have an NDK available locally, you may be able to validate
+things this session couldn't.
+
+## Known risk areas (ranked by likelihood of breaking first)
+
+1. **glib's Android meson flags** (`scripts/build-native-deps.sh`):
+   `-Dlibmount=disabled -Dselinux=disabled -Dxattr=false -Dnls=disabled`
+   are an educated guess for bionic libc, not verified against a real
+   build log.
+2. **iconv on API 26**: bionic's native iconv symbols showed up around API
+   28. `minSdk` is currently 26. May need `-Diconv=external` + a libiconv
+   meson wrap, or just bumping `minSdk` to 28 (simpler fix if acceptable).
+3. **GEGL optional deps**: `-Dcairo=disabled` in the build script is a
+   guess that core raster ops don't need Cairo. Not checked against
+   GEGL's actual `meson_options.txt` for hard requirements.
+4. **`applyOp`'s param marshalling** (`native-engine.cpp`): every GEGL op
+   property is set as `gdouble` via `gegl_node_set`. Works for
+   float-valued props (blur radius, most curve/level params). Will
+   silently fail or crash for enum/string/array-typed `GParamSpec`s —
+   no type introspection is done. Needs per-op typed paths as more ops
+   get added.
+5. **Node/graph lifecycle**: `releaseNode` only erases a handle-table
+   entry, doesn't do real `GeglNode`/graph refcount teardown. Will leak
+   across a real session. Needs a proper "release whole graph from root"
+   call before this goes past alpha.
+6. **APK signing**: alpha builds use Gradle's auto-generated debug
+   keystore. Sideload-only. Not Play-Store-eligible as-is.
+
+## File map (what to read, in order, to get oriented)
+
+1. `README.md` — architecture table, roadmap, same risk list as above (kept
+   in sync — if you update one, update both).
+2. `app/src/main/java/.../model/Layer.kt` — the data model. Start here to
+   understand what a "layer" and "edit stack" mean in this codebase.
+3. `app/src/main/java/.../ui/EditorScreen.kt` — Compose UI. Canvas is a
+   placeholder; layer panel has real drag-to-reorder logic.
+4. `app/src/main/java/.../engine/NativeEngine.kt` — the Kotlin↔JNI
+   contract. Four functions: `createImageNode`, `applyOp`,
+   `renderToBuffer`, `releaseNode`. This is the entire native API surface
+   by design — don't expand it by binding more of GEGL's API directly
+   into Kotlin; keep the graph-building logic on the native side.
+5. `app/src/main/cpp/native-engine.cpp` — JNI impl. Two build modes via
+   `#ifdef LAYERCRAFT_HAVE_GEGL`: real GEGL calls, or a stub that lets the
+   Compose UI build/run standalone without the native chain built.
+6. `app/src/main/cpp/CMakeLists.txt` — links against
+   `-DNATIVE_DEPS_PREFIX=<path>` if provided (CI passes this), falls back
+   to stub-only build otherwise.
+7. `scripts/gen-cross-file.sh` + `scripts/build-native-deps.sh` — the
+   cross-compile pipeline. Read the comments at the top of each; they
+   state explicitly what's untested and why.
+8. `.github/workflows/native-libs.yml` — manual-trigger standalone
+   validator for the native build. **Run this first** before trusting
+   `release-alpha.yml` to produce a real GEGL-linked APK.
+9. `.github/workflows/release-alpha.yml` — full pipeline: native build →
+   APK → GitHub prerelease. Degrades gracefully: if native build fails, it
+   still ships a stub-engine (UI-only) APK rather than blocking release.
+
+## Immediate next step
+
+Run `native-libs.yml` (Actions tab → workflow_dispatch, or
+`gh workflow run native-libs.yml`). Read the failure. Fix the specific
+meson flag it complains about. Repeat. This is expected to take several
+iterations — don't be surprised by the first failure, that's the plan
+working as intended (fail fast and cheap on the standalone validator
+instead of inside a release run).
+
+## Longer-term roadmap (after native build is green)
+
+See `README.md` roadmap section — it's kept current there, not duplicated
+here to avoid drift. Summary of what's *not* started at all yet: canvas
+rendering of GEGL output into Compose, layer-model-to-GEGL-graph wiring
+(`BlendMode.toGeglOpName()` exists but nothing calls it), file I/O / project
+format, and the full feature-parity pass (selections, masks, healing,
+perspective, text layers).
+
+## Conventions worth preserving
+
+- Atomic multi-file commits via the Git Trees API (not sequential Contents
+  API PUTs) — used for every commit in this repo's history so far.
+- GitHub PATs used in this account are ephemeral (rotated ~per session) —
+  don't assume a token from an earlier conversation still works; validate
+  with `GET /user` before relying on it.
+- File SHAs for Contents API writes go stale fast — refetch immediately
+  before each write if not using the Trees API.
+- When bulk-renaming identifiers (not currently relevant here, but a
+  pattern used elsewhere in this account's repos): sort replacements
+  longest-first to avoid partial-match corruption.

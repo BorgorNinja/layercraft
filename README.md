@@ -1,5 +1,10 @@
 # LayerCraft
 
+> **Picking this up fresh, or handing it to another LLM/session?** Read
+> [`HANDOFF.md`](./HANDOFF.md) first — it has the full context, decisions
+> already made, and what's untested vs. verified. This README covers the
+> same ground but assumes less context.
+
 Non-destructive, layer-based photo editor for Android. Built to cover what
 Snapseed lacks: real layers, drag-and-drop reordering, blend modes, masks,
 and a non-destructive edit graph.
