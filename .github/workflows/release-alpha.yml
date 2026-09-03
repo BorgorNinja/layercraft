@@ -49,7 +49,7 @@ jobs:
       - name: Build native dependency chain (arm64-v8a)
         run: |
           chmod +x scripts/*.sh
-          ./scripts/build-native-deps.sh arm64-v8a 26 "${{ github.workspace }}/native-prefix"
+          ./scripts/build-native-deps.sh arm64-v8a 28 "${{ github.workspace }}/native-prefix"
 
       - name: Upload prefix
         if: success()

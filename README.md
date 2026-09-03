@@ -42,11 +42,13 @@ not portable to Android; GEGL+babl are the extractable, portable core).
 
 ## Roadmap
 
-1. ~~**NDK toolchain for GEGL/babl**~~ — meson cross-file generator +
-   dependency-chain build script written (`scripts/`), wired into CI
-   (`.github/workflows/native-libs.yml`, `release-alpha.yml`). **Not yet
-   validated end-to-end** — see "Known risk areas" above; run
-   `native-libs.yml` to find out what breaks first.
+1. **NDK toolchain for GEGL/babl** — in active iteration, not done. Two
+   real CI runs so far: run 1 needed a log-capture workaround added
+   (Actions log storage is unreachable from the environment developing
+   this); run 2 got into glib's actual meson build and failed on a
+   missing `iconv` dependency at API 26, fixed by bumping to API 28 (see
+   "Known risk areas"). Fix pushed but not yet confirmed by a follow-up
+   run.
 2. **JNI surface** — done for a first minimal cut (`createImageNode`,
    `applyOp`, `renderToBuffer`, `releaseNode` in `NativeEngine.kt` /
    `native-engine.cpp`), real GEGL calls written but unrun. Typed param
@@ -92,9 +94,16 @@ environment this was developed in. It runs in CI instead:
 - **glib flags for bionic**: `-Dlibmount=disabled -Dselinux=disabled
   -Dxattr=false -Dnls=disabled` are a starting guess for what Android's
   libc doesn't support. May need adjustment.
-- **iconv on API 26**: bionic gained native iconv symbols around API 28.
-  `minSdk 26` may need `-Diconv=external` + a libiconv wrap, or bumping
-  `minSdk` to 28.
+- ~~**iconv on API 26**~~ — **found & fixed**: glib's meson build failed
+  with `Dependency "iconv" not found (tried builtin and system)` on the
+  first real CI run at API 26. Bionic only gained native iconv symbols at
+  API 28. Fixed by bumping `minSdk`/build API to 28 rather than pulling in
+  a libiconv wrap (simpler, and 28 is a low enough floor to not matter for
+  a new app). Unverified until the next CI run confirms it clears this
+  specific error — other bionic feature-probe failures further down the
+  same log (`pthread_attr_setinheritsched`, `pthread_cond_timedwait_relative_np`,
+  `pthread_getaffinity_np`) look like normal non-fatal feature detection,
+  not blockers, but that's not confirmed yet either.
 - **GEGL optional deps**: `-Dcairo=disabled` skips ops needing Cairo
   (e.g. some text/vector rendering); core raster ops shouldn't need it,
   but this hasn't been verified against GEGL's actual `meson_options.txt`.

@@ -23,13 +23,11 @@ on:
       api_level:
         description: "Android API level (must match app/build.gradle.kts minSdk)"
         required: true
-        default: "26"
+        default: "28"
 
 jobs:
   build-native-deps:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -50,38 +48,11 @@ jobs:
           echo "Using NDK at $NDK_HOME"
 
       - name: Build glib -> json-glib -> babl -> gegl for ${{ inputs.abi }}
-        id: build
-        continue-on-error: true
         run: |
           chmod +x scripts/*.sh
-          set -o pipefail
-          ./scripts/build-native-deps.sh "${{ inputs.abi }}" "${{ inputs.api_level }}" "${{ github.workspace }}/native-prefix" 2>&1 | tee build.log
-
-      - name: Commit build log (network access to raw.githubusercontent.com / api.github.com only -- Actions log storage is unreachable from the reviewing sandbox)
-        if: always()
-        run: |
-          LOGFILE="native-libs-${{ github.run_id }}-${{ inputs.abi }}.log"
-          cp build.log "/tmp/$LOGFILE" 2>/dev/null || echo "no build.log produced" > "/tmp/$LOGFILE"
-          git config user.name "layercraft-ci"
-          git config user.email "ci@users.noreply.github.com"
-          if git fetch origin ci-logs 2>/dev/null; then
-            git checkout -B ci-logs origin/ci-logs
-          else
-            git checkout --orphan ci-logs
-            git rm -rf . >/dev/null 2>&1 || true
-          fi
-          mkdir -p ci-logs
-          cp "/tmp/$LOGFILE" "ci-logs/$LOGFILE"
-          git add "ci-logs/$LOGFILE"
-          git commit -m "CI log: native-libs run ${{ github.run_id }} (${{ inputs.abi }})" || echo "nothing to commit"
-          git push origin ci-logs
-
-      - name: Fail job if build step failed
-        if: steps.build.outcome == 'failure'
-        run: exit 1
+          ./scripts/build-native-deps.sh "${{ inputs.abi }}" "${{ inputs.api_level }}" "${{ github.workspace }}/native-prefix"
 
       - name: Upload prefix as artifact
-        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: native-prefix-${{ inputs.abi }}

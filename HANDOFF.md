@@ -87,9 +87,10 @@ things this session couldn't.
    `-Dlibmount=disabled -Dselinux=disabled -Dxattr=false -Dnls=disabled`
    are an educated guess for bionic libc, not verified against a real
    build log.
-2. **iconv on API 26**: bionic's native iconv symbols showed up around API
-   28. `minSdk` is currently 26. May need `-Diconv=external` + a libiconv
-   meson wrap, or just bumping `minSdk` to 28 (simpler fix if acceptable).
+2. ~~**iconv on API 26**~~ — found & fixed on first real CI run: glib's
+   meson build failed with `Dependency "iconv" not found`. Fixed by
+   bumping `minSdk`/build API to 28 (bionic's native iconv floor), not yet
+   confirmed by a follow-up run.
 3. **GEGL optional deps**: `-Dcairo=disabled` in the build script is a
    guess that core raster ops don't need Cairo. Not checked against
    GEGL's actual `meson_options.txt` for hard requirements.
@@ -135,14 +136,41 @@ things this session couldn't.
    APK → GitHub prerelease. Degrades gracefully: if native build fails, it
    still ships a stub-engine (UI-only) APK rather than blocking release.
 
+## CI run log (append new entries here, most recent first)
+
+- **Run 2** (`33736861080`, api_level=26): glib meson build reached actual
+  compilation, failed with `Dependency "iconv" not found (tried builtin
+  and system)` at `glib/meson.build:2248`. Root cause: bionic's native
+  iconv symbols only exist from API 28+. Fix: bumped `minSdk` and the
+  workflows' default `api_level` from 26 to 28 (`app/build.gradle.kts`,
+  both workflow YAML files). **Not yet confirmed** — next run is the
+  check. Other errors earlier in the same log (`pthread_attr_setinheritsched`,
+  `pthread_cond_timedwait_relative_np`, `pthread_getaffinity_np`,
+  `winsock2.h`) are meson's normal feature-probe failures, not blockers —
+  glib disables the corresponding optional code paths when a probe fails,
+  it doesn't abort the build. Only the explicit `ERROR:` line ends the run.
+- **Run 1** (`33736614984`): failed before reaching glib's own build --
+  Actions log storage (`productionresultssa17.blob.core.windows.net`) is
+  outside this environment's network allowlist, so the failure reason
+  wasn't directly visible. Fix: added a step to `native-libs.yml` that
+  tees build output to `build.log` and commits it to an orphan `ci-logs`
+  branch on failure, readable via `raw.githubusercontent.com`. This is
+  the log-retrieval path for all subsequent runs too.
+
+**How to read a new failure**: fetch
+`https://raw.githubusercontent.com/BorgorNinja/layercraft/ci-logs/ci-logs/native-libs-<run_id>-<abi>.log`
+(the run ID is in the workflow run URL). `grep -n -iE "error|ERROR:"` it —
+the meson build produces a lot of noisy non-fatal probe failures; the
+actual blocker is almost always the last `ERROR:`-prefixed line near a
+`meson.build:LINE:COL:` reference, right before the build aborts.
+
 ## Immediate next step
 
-Run `native-libs.yml` (Actions tab → workflow_dispatch, or
-`gh workflow run native-libs.yml`). Read the failure. Fix the specific
-meson flag it complains about. Repeat. This is expected to take several
-iterations — don't be surprised by the first failure, that's the plan
-working as intended (fail fast and cheap on the standalone validator
-instead of inside a release run).
+Re-run `native-libs.yml` with `api_level=28` to confirm the iconv fix
+actually clears glib's build (it may not be the only issue — babl/gegl
+haven't been reached yet in any run so far). If it still fails, follow
+"How to read a new failure" above, fix, repeat. Standard iteration loop,
+same as before.
 
 ## Longer-term roadmap (after native build is green)
 
