@@ -47,6 +47,7 @@ jobs:
           echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
 
       - name: Build native dependency chain (arm64-v8a)
+        id: build_native
         run: |
           chmod +x scripts/*.sh
           ./scripts/build-native-deps.sh arm64-v8a 28 "${{ github.workspace }}/native-prefix"
@@ -61,11 +62,13 @@ jobs:
 
       - id: mark
         if: always()
-        run: echo "succeeded=${{ job.status == 'success' }}" >> "$GITHUB_OUTPUT"
+        run: echo "succeeded=${{ steps.build_native.outcome == 'success' }}" >> "$GITHUB_OUTPUT"
 
   build-apk:
     needs: native-deps
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -82,6 +85,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Provision Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
       - name: Bootstrap Gradle wrapper
         run: gradle wrapper --gradle-version 8.7
 
@@ -96,6 +104,8 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
       - name: Build debug APK
+        id: build_apk
+        continue-on-error: true
         run: |
           if [ -d native-prefix ] && [ "$(ls -A native-prefix 2>/dev/null)" ]; then
             EXTRA_ARG="-PnativeDepsPrefix=${{ github.workspace }}/native-prefix"
@@ -105,7 +115,31 @@ jobs:
             echo "Building stub engine (native-deps job did not produce a prefix)"
           fi
           chmod +x gradlew
-          ./gradlew assembleDebug $EXTRA_ARG
+          set -o pipefail
+          ./gradlew assembleDebug $EXTRA_ARG 2>&1 | tee build-apk.log
+
+      - name: Commit build log on failure (Actions log storage unreachable from review sandbox -- see native-libs.yml for the same pattern)
+        if: always()
+        run: |
+          LOGFILE="release-alpha-${{ github.run_id }}-build-apk.log"
+          cp build-apk.log "/tmp/$LOGFILE" 2>/dev/null || echo "no build-apk.log produced" > "/tmp/$LOGFILE"
+          git config user.name "layercraft-ci"
+          git config user.email "ci@users.noreply.github.com"
+          if git fetch origin ci-logs 2>/dev/null; then
+            git checkout -B ci-logs origin/ci-logs
+          else
+            git checkout --orphan ci-logs
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p ci-logs
+          cp "/tmp/$LOGFILE" "ci-logs/$LOGFILE"
+          git add "ci-logs/$LOGFILE"
+          git commit -m "CI log: release-alpha run ${{ github.run_id }} (build-apk)" || echo "nothing to commit"
+          git push origin ci-logs
+
+      - name: Fail job if APK build failed
+        if: steps.build_apk.outcome == 'failure'
+        run: exit 1
 
       - name: Rename APK
         run: |
