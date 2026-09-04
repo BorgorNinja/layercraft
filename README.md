@@ -16,20 +16,24 @@ and a non-destructive edit graph.
 | UI shell | Kotlin + Jetpack Compose | scaffolded |
 | Canvas / gestures (drag-drop, pinch, reorder) | Compose `PointerInput` + custom `Canvas` | scaffolded |
 | Edit-stack model | Kotlin data classes (`model/`) | scaffolded |
-| Image processing engine | GEGL + babl via JNI (NDK cross-compiled) | **not yet built — stub JNI only** |
+| Image processing engine | GEGL + babl via JNI (NDK cross-compiled) | **compiles + links (`v0.1.0-alpha`) — runtime unverified** |
 | GPU preview | `RenderEffect` (API 31+) fallback, GLES later | not started |
 | File I/O | Android `BitmapFactory` / `ImageDecoder` now; libjpeg-turbo/skia-codec later | not started |
 
 ## Current state (this commit)
 
-This is a **scaffold**, not a working editor:
+This is a **scaffold with a working native build, not a working editor**:
 
 - Compose UI shell: layer panel (drag-to-reorder via `LazyColumn`), canvas
   placeholder, basic edit-stack model (`Layer`, `LayerType`, `BlendMode`).
-- JNI bridge (`NativeEngine.kt` + `native-engine.cpp`) exists but the native
-  side is a **stub** — it does not link GEGL/babl yet. Calls return
-  unimplemented placeholders.
-- No image loading/compositing pipeline wired up yet.
+- JNI bridge (`NativeEngine.kt` + `native-engine.cpp`) now links against a
+  real cross-compiled GEGL/babl (see "Native dependency chain" below) —
+  confirmed by [`v0.1.0-alpha`](https://github.com/BorgorNinja/layercraft/releases/tag/v0.1.0-alpha)
+  building successfully. **This means it compiles and links, not that it
+  works** — no one has run the APK yet, so whether `System.loadLibrary`
+  succeeds at runtime or the JNI calls produce correct output is unknown.
+- No image loading/compositing pipeline wired up yet — the Compose canvas
+  doesn't call into the native engine at all (see roadmap item 3).
 
 ## Why GEGL/babl and not a from-scratch engine
 
@@ -42,18 +46,19 @@ not portable to Android; GEGL+babl are the extractable, portable core).
 
 ## Roadmap
 
-1. ~~**NDK toolchain for GEGL/babl**~~ — **done as of run 6**: the full
-   chain (glib → json-glib → libjpeg-turbo → zlib → libpng → babl → gegl)
-   cross-compiles cleanly for `arm64-v8a`/API 28. Took 6 CI iterations
-   (see HANDOFF.md CI run log for the full debugging arc: log-storage
-   access, iconv/API-level, gegl's undeclared-optional hard deps on
-   libjpeg-turbo/libpng, libpng's zlib.pc gap). Not yet confirmed: that
-   `native-engine.cpp` actually links against this prefix, or that the
-   resulting `.so` works on-device — see item 2.
-2. **JNI surface** — done for a first minimal cut (`createImageNode`,
-   `applyOp`, `renderToBuffer`, `releaseNode` in `NativeEngine.kt` /
-   `native-engine.cpp`), real GEGL calls written but unrun. Typed param
-   handling beyond `gdouble` still needed (see risk areas).
+1. ~~**NDK toolchain for GEGL/babl**~~ — **done**: the full chain (glib →
+   json-glib → libjpeg-turbo → zlib → libpng → babl → gegl) cross-compiles
+   cleanly for `arm64-v8a`/API 28, confirmed reproducible across 3 CI
+   runs. Took 6 CI iterations (see HANDOFF.md CI run log for the full
+   debugging arc: log-storage access, iconv/API-level, gegl's undeclared
+   hard deps on libjpeg-turbo/libpng, libpng's zlib.pc gap).
+2. ~~**JNI surface**~~ — `createImageNode`, `applyOp`, `renderToBuffer`,
+   `releaseNode` implemented and **confirmed compiling + linking**
+   against the real GEGL prefix as of `v0.1.0-alpha`. **Not yet verified
+   at runtime** — nobody has installed the APK and confirmed
+   `System.loadLibrary` succeeds or that any JNI call produces correct
+   output. Typed param handling beyond `gdouble` still needed for ops
+   with non-numeric properties (see risk areas).
 3. **Compose canvas wired to native preview buffer** — render GEGL output
    into a `Bitmap`/`SurfaceTexture` per edit-stack change. Not started —
    `CanvasPreview` in `EditorScreen.kt` is still a placeholder.
@@ -65,11 +70,14 @@ not portable to Android; GEGL+babl are the extractable, portable core).
    per-layer raster/adjustment data). Not started.
 6. **Feature parity pass** — selections, masks, healing, perspective, text
    layers, curves/levels UI. Not started.
-7. ~~**Alpha APK release**~~ — pipeline written (`release-alpha.yml`,
-   triggered by `workflow_dispatch` or a `v*-alpha*` tag push), produces a
-   debug-signed prerelease GitHub Release. Ships a stub-engine (UI-only)
-   APK if the native-deps job fails, so releases aren't blocked on GEGL
-   compiling cleanly on the first try.
+7. ~~**Alpha APK release**~~ — **done**: pipeline (`release-alpha.yml`)
+   produced [`v0.1.0-alpha`](https://github.com/BorgorNinja/layercraft/releases/tag/v0.1.0-alpha),
+   57.4MB, `arm64-v8a`, debug-signed, GEGL linked. Took 4 iterations on
+   top of item 1 (invalid `job.status` CI context, missing system Gradle
+   binary, Kotlin 2.0 Compose Compiler plugin requirement — see
+   HANDOFF.md CI run log). Degrades to a stub-engine (UI-only) APK if the
+   native-deps job fails, so future releases aren't blocked on the native
+   chain compiling cleanly every time.
 
 ## Native dependency chain (GEGL/babl for Android)
 
