@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Cross-compiles the babl/GEGL dependency chain for a single Android ABI:
 #   glib (pulls libffi + pcre2 as meson wrap subprojects)
-#     -> json-glib -> babl -> gegl
+#     -> json-glib -> libjpeg-turbo -> libpng -> babl -> gegl
+#
+# libjpeg-turbo and libpng are hard (non-optional, no meson-wrap fallback)
+# dependencies of gegl/meson.build -- confirmed by reading it directly,
+# not guessed. They're built via CMake using the NDK's own toolchain file,
+# babl/gegl/glib/json-glib stay on meson.
 #
 # Only runs meaningfully on a machine with:
 #   - ANDROID_NDK_HOME set (GitHub Actions ubuntu runners ship this)
-#   - meson, ninja, pkg-config, git on PATH
+#   - meson, ninja, cmake, pkg-config, git on PATH
 #   - full internet access (GNOME GitHub mirrors + meson wrapdb)
 #
 # This sandbox has neither the NDK nor access to gitlab.gnome.org, so this
@@ -24,6 +29,12 @@ JOBS="${JOBS:-$(nproc)}"
 
 : "${ANDROID_NDK_HOME:?ANDROID_NDK_HOME must be set}"
 
+NDK_CMAKE_TOOLCHAIN="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake"
+if [[ ! -f "$NDK_CMAKE_TOOLCHAIN" ]]; then
+  echo "NDK CMake toolchain file not found: $NDK_CMAKE_TOOLCHAIN" >&2
+  exit 1
+fi
+
 mkdir -p "$PREFIX"
 CROSS_FILE="${WORKDIR}/android-${ABI}.ini"
 "$(dirname "$0")/gen-cross-file.sh" "$ABI" "$API" "$CROSS_FILE"
@@ -34,11 +45,11 @@ export PKG_CONFIG_LIBDIR="${PREFIX}/lib/pkgconfig:${PREFIX}/share/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR=""
 
 clone_shallow () {
-  local repo="$1" dest="$2" tag="${3:-}"
+  local org="$1" repo="$2" dest="$3" tag="${4:-}"
   if [[ -n "$tag" ]]; then
-    git clone --depth 1 --branch "$tag" "https://github.com/GNOME/${repo}.git" "$dest"
+    git clone --depth 1 --branch "$tag" "https://github.com/${org}/${repo}.git" "$dest"
   else
-    git clone --depth 1 "https://github.com/GNOME/${repo}.git" "$dest"
+    git clone --depth 1 "https://github.com/${org}/${repo}.git" "$dest"
   fi
 }
 
@@ -57,8 +68,25 @@ build_meson_project () {
   meson install -C "$builddir"
 }
 
-echo "== [1/4] glib =="
-clone_shallow glib "${WORKDIR}/glib"
+build_cmake_project () {
+  local src="$1"; shift
+  local builddir="${src}/_build-${ABI}"
+  cmake -S "$src" -B "$builddir" \
+    -DCMAKE_TOOLCHAIN_FILE="$NDK_CMAKE_TOOLCHAIN" \
+    -DANDROID_ABI="$ABI" \
+    -DANDROID_PLATFORM="android-${API}" \
+    -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DCMAKE_FIND_ROOT_PATH="$PREFIX" \
+    -DCMAKE_PREFIX_PATH="$PREFIX" \
+    -DBUILD_SHARED_LIBS=ON \
+    -DCMAKE_BUILD_TYPE=Release \
+    "$@"
+  cmake --build "$builddir" --parallel "$JOBS"
+  cmake --install "$builddir"
+}
+
+echo "== [1/6] glib =="
+clone_shallow GNOME glib "${WORKDIR}/glib"
 build_meson_project "${WORKDIR}/glib" \
   -Dtests=false \
   -Dinstalled_tests=false \
@@ -67,21 +95,37 @@ build_meson_project "${WORKDIR}/glib" \
   -Dxattr=false \
   -Dnls=disabled
 
-echo "== [2/4] json-glib =="
-clone_shallow json-glib "${WORKDIR}/json-glib"
+echo "== [2/6] json-glib =="
+clone_shallow GNOME json-glib "${WORKDIR}/json-glib"
 build_meson_project "${WORKDIR}/json-glib" \
   -Dtests=false \
   -Dintrospection=disabled \
   -Dgtk_doc=disabled
 
-echo "== [3/4] babl =="
-clone_shallow babl "${WORKDIR}/babl"
+echo "== [3/6] libjpeg-turbo (gegl hard dep, no meson-wrap fallback) =="
+clone_shallow libjpeg-turbo libjpeg-turbo "${WORKDIR}/libjpeg-turbo"
+build_cmake_project "${WORKDIR}/libjpeg-turbo" \
+  -DENABLE_STATIC=OFF \
+  -DENABLE_SHARED=ON \
+  -DWITH_SIMD=OFF \
+  -DWITH_TURBOJPEG=OFF
+
+echo "== [4/6] libpng (gegl hard dep, no meson-wrap fallback; needs zlib from NDK sysroot) =="
+clone_shallow pnggroup libpng "${WORKDIR}/libpng"
+build_cmake_project "${WORKDIR}/libpng" \
+  -DPNG_SHARED=ON \
+  -DPNG_STATIC=OFF \
+  -DPNG_TESTS=OFF \
+  -DPNG_TOOLS=OFF
+
+echo "== [5/6] babl =="
+clone_shallow GNOME babl "${WORKDIR}/babl"
 build_meson_project "${WORKDIR}/babl" \
   -Denable-gir=false \
   -Dwith-docs=false
 
-echo "== [4/4] gegl =="
-clone_shallow gegl "${WORKDIR}/gegl"
+echo "== [6/6] gegl =="
+clone_shallow GNOME gegl "${WORKDIR}/gegl"
 build_meson_project "${WORKDIR}/gegl" \
   -Dintrospection=false \
   -Ddocs=false \
@@ -91,3 +135,4 @@ build_meson_project "${WORKDIR}/gegl" \
 
 echo "Done. Installed to: $PREFIX"
 find "$PREFIX/lib" -maxdepth 1 -name "*.so*" 2>/dev/null || true
+

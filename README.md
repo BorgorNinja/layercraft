@@ -73,9 +73,16 @@ not portable to Android; GEGL+babl are the extractable, portable core).
 ## Native dependency chain (GEGL/babl for Android)
 
 `scripts/build-native-deps.sh` cross-compiles, in order: **glib** (which
-pulls libffi + pcre2 as meson wrap subprojects) → **json-glib** → **babl**
-→ **gegl**, targeting a single Android ABI via a generated meson cross-file
-(`scripts/gen-cross-file.sh`).
+pulls libffi + pcre2 as meson wrap subprojects) → **json-glib** →
+**libjpeg-turbo** → **libpng** → **babl** → **gegl**, targeting a single
+Android ABI via a generated meson cross-file (`scripts/gen-cross-file.sh`)
+for the meson-based projects, and the NDK's own CMake toolchain file for
+libjpeg-turbo/libpng (both build via CMake upstream, not meson).
+
+libjpeg-turbo and libpng were added after confirming, by reading
+`gegl/meson.build` directly, that gegl hard-requires them (`dependency(...)`
+calls with no `required: false` and no meson-wrap `fallback:`, unlike e.g.
+`poly2tri-c`/`libnsgif` which self-provide via wrap subprojects).
 
 This cannot run in a sandbox without the Android NDK and without network
 access to `gitlab.gnome.org`/GitHub mirrors — both are unavailable in the

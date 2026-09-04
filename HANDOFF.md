@@ -31,7 +31,7 @@ games — this project follows the Android conventions).
 | Canvas/gestures | Compose `PointerInput` + `Canvas` | placeholder only — no image rendering wired up |
 | Edit-stack model | Kotlin data classes (`model/Layer.kt`) | scaffolded |
 | Image processing engine | GEGL + babl via JNI | **written but never compiled or run** |
-| Native dependency chain | glib → json-glib → babl → gegl, cross-compiled for Android via meson | **written but never run** |
+| Native dependency chain | glib → json-glib → libjpeg-turbo → libpng → babl → gegl (meson + CMake), cross-compiled for Android | **in active iteration, not green yet** |
 | GPU preview | not started | — |
 | File I/O / project format | not started | — |
 
