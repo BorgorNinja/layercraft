@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Cross-compiles the babl/GEGL dependency chain for a single Android ABI:
 #   glib (pulls libffi + pcre2 as meson wrap subprojects)
-#     -> json-glib -> libjpeg-turbo -> libpng -> babl -> gegl
+#     -> json-glib -> libjpeg-turbo -> zlib -> libpng -> babl -> gegl
 #
-# libjpeg-turbo and libpng are hard (non-optional, no meson-wrap fallback)
-# dependencies of gegl/meson.build -- confirmed by reading it directly,
-# not guessed. They're built via CMake using the NDK's own toolchain file,
-# babl/gegl/glib/json-glib stay on meson.
+# libjpeg-turbo, zlib, and libpng are hard (non-optional, no meson-wrap
+# fallback) dependencies of gegl/meson.build -- confirmed by reading it
+# directly, not guessed. zlib is needed because libpng's generated
+# pkg-config file requires it, and the NDK sysroot ships libz.so/zlib.h
+# but no zlib.pc for pkg-config to find. All three build via CMake using
+# the NDK's own toolchain file; babl/gegl/glib/json-glib stay on meson.
 #
 # Only runs meaningfully on a machine with:
 #   - ANDROID_NDK_HOME set (GitHub Actions ubuntu runners ship this)
@@ -85,7 +87,7 @@ build_cmake_project () {
   cmake --install "$builddir"
 }
 
-echo "== [1/6] glib =="
+echo "== [1/7] glib =="
 clone_shallow GNOME glib "${WORKDIR}/glib"
 build_meson_project "${WORKDIR}/glib" \
   -Dtests=false \
@@ -95,14 +97,14 @@ build_meson_project "${WORKDIR}/glib" \
   -Dxattr=false \
   -Dnls=disabled
 
-echo "== [2/6] json-glib =="
+echo "== [2/7] json-glib =="
 clone_shallow GNOME json-glib "${WORKDIR}/json-glib"
 build_meson_project "${WORKDIR}/json-glib" \
   -Dtests=false \
   -Dintrospection=disabled \
   -Dgtk_doc=disabled
 
-echo "== [3/6] libjpeg-turbo (gegl hard dep, no meson-wrap fallback) =="
+echo "== [3/7] libjpeg-turbo (gegl hard dep, no meson-wrap fallback) =="
 clone_shallow libjpeg-turbo libjpeg-turbo "${WORKDIR}/libjpeg-turbo"
 build_cmake_project "${WORKDIR}/libjpeg-turbo" \
   -DENABLE_STATIC=OFF \
@@ -110,7 +112,12 @@ build_cmake_project "${WORKDIR}/libjpeg-turbo" \
   -DWITH_SIMD=OFF \
   -DWITH_TURBOJPEG=OFF
 
-echo "== [4/6] libpng (gegl hard dep, no meson-wrap fallback; needs zlib from NDK sysroot) =="
+echo "== [4/7] zlib (libpng hard dep; NDK sysroot has libz.so but no .pc file) =="
+clone_shallow madler zlib "${WORKDIR}/zlib"
+build_cmake_project "${WORKDIR}/zlib" \
+  -DZLIB_BUILD_EXAMPLES=OFF
+
+echo "== [5/7] libpng (gegl hard dep, no meson-wrap fallback) =="
 clone_shallow pnggroup libpng "${WORKDIR}/libpng"
 build_cmake_project "${WORKDIR}/libpng" \
   -DPNG_SHARED=ON \
@@ -118,13 +125,13 @@ build_cmake_project "${WORKDIR}/libpng" \
   -DPNG_TESTS=OFF \
   -DPNG_TOOLS=OFF
 
-echo "== [5/6] babl =="
+echo "== [6/7] babl =="
 clone_shallow GNOME babl "${WORKDIR}/babl"
 build_meson_project "${WORKDIR}/babl" \
   -Denable-gir=false \
   -Dwith-docs=false
 
-echo "== [6/6] gegl =="
+echo "== [7/7] gegl =="
 clone_shallow GNOME gegl "${WORKDIR}/gegl"
 build_meson_project "${WORKDIR}/gegl" \
   -Dintrospection=false \

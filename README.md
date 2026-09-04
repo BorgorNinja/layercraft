@@ -74,15 +74,21 @@ not portable to Android; GEGL+babl are the extractable, portable core).
 
 `scripts/build-native-deps.sh` cross-compiles, in order: **glib** (which
 pulls libffi + pcre2 as meson wrap subprojects) → **json-glib** →
-**libjpeg-turbo** → **libpng** → **babl** → **gegl**, targeting a single
-Android ABI via a generated meson cross-file (`scripts/gen-cross-file.sh`)
-for the meson-based projects, and the NDK's own CMake toolchain file for
-libjpeg-turbo/libpng (both build via CMake upstream, not meson).
+**libjpeg-turbo** → **zlib** → **libpng** → **babl** → **gegl**, targeting
+a single Android ABI via a generated meson cross-file
+(`scripts/gen-cross-file.sh`) for the meson-based projects, and the NDK's
+own CMake toolchain file for libjpeg-turbo/zlib/libpng (all three build via
+CMake upstream, not meson).
 
 libjpeg-turbo and libpng were added after confirming, by reading
-`gegl/meson.build` directly, that gegl hard-requires them (`dependency(...)`
+gegl/meson.build directly, that gegl hard-requires them (`dependency(...)`
 calls with no `required: false` and no meson-wrap `fallback:`, unlike e.g.
-`poly2tri-c`/`libnsgif` which self-provide via wrap subprojects).
+`poly2tri-c`/`libnsgif` which self-provide via wrap subprojects). zlib was
+added after that: libpng's own generated `.pc` file requires `zlib`, and
+while the NDK sysroot ships `libz.so`/`zlib.h`, it has no `zlib.pc` for
+pkg-config to resolve — cross-compiling zlib into the same prefix was more
+robust than hand-writing a `.pc` pointing at NDK-sysroot paths that could
+drift across NDK versions.
 
 This cannot run in a sandbox without the Android NDK and without network
 access to `gitlab.gnome.org`/GitHub mirrors — both are unavailable in the

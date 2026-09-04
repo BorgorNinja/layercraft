@@ -31,7 +31,7 @@ games — this project follows the Android conventions).
 | Canvas/gestures | Compose `PointerInput` + `Canvas` | placeholder only — no image rendering wired up |
 | Edit-stack model | Kotlin data classes (`model/Layer.kt`) | scaffolded |
 | Image processing engine | GEGL + babl via JNI | **written but never compiled or run** |
-| Native dependency chain | glib → json-glib → libjpeg-turbo → libpng → babl → gegl (meson + CMake), cross-compiled for Android | **in active iteration, not green yet** |
+| Native dependency chain | glib → json-glib → libjpeg-turbo → zlib → libpng → babl → gegl (meson + CMake), cross-compiled for Android | **in active iteration, not green yet** |
 | GPU preview | not started | — |
 | File I/O / project format | not started | — |
 
@@ -138,6 +138,24 @@ things this session couldn't.
 
 ## CI run log (append new entries here, most recent first)
 
+- **Run 5** (`33824890039`, api_level=28): confirmed run 4's iconv fix —
+  glib and json-glib now build and link cleanly (found via pkg-config).
+  New failure: `gegl/meson.build:387` hard-requires `libjpeg`/
+  `libjpeg-turbo` — confirmed by reading the file directly (no
+  `required: false`, no wrap `fallback:`, unlike e.g. `poly2tri-c`/
+  `libnsgif` a few lines below which do self-provide via wrap). Fix:
+  added libjpeg-turbo + libpng to the chain via CMake (NDK's own
+  toolchain file). Re-run hit a second issue in the same area: libpng's
+  generated `.pc` requires `zlib`, and while bionic/NDK ships `libz.so` +
+  `zlib.h`, there's no `zlib.pc` for pkg-config to resolve it. Fix: added
+  `madler/zlib` to the chain too (built via CMake, same prefix) rather
+  than hand-writing a `.pc` pointing at NDK sysroot paths. **Not yet
+  confirmed** — next run tests both the jpeg/png addition and the zlib
+  fix together.
+- **Run 4** (`33824560762`, api_level=28): confirmed the iconv fix works
+  (`Run-time dependency iconv found: YES`). Failed later at
+  `gegl/meson.build:387` — see run 5 above, this is where libjpeg-turbo
+  was first identified as missing.
 - **Run 3** (`33753889868`, api_level=28): failed, but not on iconv or
   anything in the actual build — the workflow run used a version of
   `native-libs.yml` missing the log-capture steps entirely (confirmed via
@@ -180,9 +198,9 @@ actual blocker is almost always the last `ERROR:`-prefixed line near a
 
 ## Immediate next step
 
-Re-run `native-libs.yml` with `api_level=28` (run 3 didn't actually test
-this due to the CDN-cache regression above — run 4 is the real test). If
-it still fails, follow "How to read a new failure" above, fix, repeat.
+Re-run `native-libs.yml` with `api_level=28` — run 5's fix (zlib +
+libpng + libjpeg-turbo added to the chain) hasn't been tested by an
+actual CI run yet.
 
 ## Longer-term roadmap (after native build is green)
 
