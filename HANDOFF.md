@@ -138,6 +138,34 @@ things this session couldn't.
 
 ## CI run log (append new entries here, most recent first)
 
+- **release-alpha run 3** (`33849222581`): native-deps job succeeded again
+  (chain is reproducible). `build-apk` job reached the actual Gradle
+  build for the first time and failed -- but on something unrelated to
+  the native chain entirely: `org.jetbrains.kotlin.plugin.compose` Gradle
+  plugin is required as of Kotlin 2.0+ when Compose is enabled (it used to
+  be bundled into the Kotlin Android plugin; that changed and this
+  scaffold predated the change). Fixed by adding the plugin to both
+  `build.gradle.kts` (root, `apply false`) and `app/build.gradle.kts`, and
+  removing the now-superseded `composeOptions { kotlinCompilerExtensionVersion }`
+  block. Not yet confirmed by a follow-up run. Two earlier release-alpha
+  attempts (runs 1-2, IDs `33848253492`/`33848787148`) failed before
+  reaching this point on Gradle-wrapper-bootstrap issues -- see below.
+- **release-alpha run 2** (`33848787148`): `gradle wrapper` step still
+  failed even after adding `gradle/actions/setup-gradle@v4` to provision a
+  `gradle` binary -- but the failure wasn't captured by the log-commit
+  step, because that step ran *before* the log-capture step existed in
+  the pipeline (wrapper-bootstrap was a separate, unwrapped step). Fixed
+  by merging wrapper-bootstrap into the same logged/`continue-on-error`
+  block as the actual Gradle build, so any failure in either is captured.
+- **release-alpha run 1** (`33848253492`): `Bootstrap Gradle wrapper`
+  step failed (`gradle: command not found` -- ubuntu-latest runners don't
+  guarantee a system `gradle` binary). Also found a real bug while
+  debugging: the `mark` step used `${{ job.status == 'success' }}`, but
+  `job.status` isn't a valid context mid-job -- it always evaluated to
+  `succeeded=false` regardless of the native build's actual result, which
+  would have made every release ship the stub-engine APK even after the
+  native chain went green. Fixed by referencing
+  `steps.build_native.outcome` instead (a real, valid context).
 - **Run 6** (`33825293060`, api_level=28): **SUCCESS.** Full chain (glib →
   json-glib → libjpeg-turbo → zlib → libpng → babl → gegl) cross-compiled
   cleanly for `arm64-v8a`. `native-prefix-arm64-v8a` artifact uploaded.
@@ -206,12 +234,11 @@ actual blocker is almost always the last `ERROR:`-prefixed line near a
 
 ## Immediate next step
 
-Native chain is green (run 6). Next: trigger `release-alpha.yml` to test
-whether `native-engine.cpp`'s real GEGL JNI calls actually compile/link
-against the prefix (they were written against the API but never
-compiled), and whether the CMake linking config in `CMakeLists.txt` is
-correct end to end. This is a different failure surface than the meson
-chain — expect it to need its own iteration round, same pattern as above.
+Re-run `release-alpha.yml` — the Compose Compiler Gradle plugin fix
+hasn't been tested by an actual run yet. If it clears this, the next
+thing to check is whether `native-engine.cpp`'s real GEGL JNI calls
+actually compile/link (that code has never been exercised by a build
+until this point in the pipeline).
 
 ## Longer-term roadmap (after native build is green)
 

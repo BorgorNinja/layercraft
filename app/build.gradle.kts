@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -57,9 +58,9 @@ android {
         compose = true
     }
 
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.15"
-    }
+    // Compose compiler version is now managed by the
+    // org.jetbrains.kotlin.plugin.compose Gradle plugin (Kotlin 2.0+);
+    // no composeOptions{kotlinCompilerExtensionVersion} needed/allowed.
 
     externalNativeBuild {
         cmake {
