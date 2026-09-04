@@ -1,0 +1,27 @@
+Starting a Gradle Daemon (subsequent builds will be faster)
+
+> Configure project :app
+Checking the license for package NDK (Side by side) 26.1.10909125 in /usr/local/lib/android/sdk/licenses
+License for package NDK (Side by side) 26.1.10909125 accepted.
+Preparing "Install NDK (Side by side) 26.1.10909125 v.26.1.10909125".
+"Install NDK (Side by side) 26.1.10909125 v.26.1.10909125" ready.
+Installing NDK (Side by side) 26.1.10909125 in /usr/local/lib/android/sdk/ndk/26.1.10909125
+"Install NDK (Side by side) 26.1.10909125 v.26.1.10909125" complete.
+"Install NDK (Side by side) 26.1.10909125 v.26.1.10909125" finished.
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/build_apk-1788507320552.json
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+A problem occurred configuring project ':app'.
+> Starting in Kotlin 2.0, the Compose Compiler Gradle plugin is required
+  when compose is enabled. See the following link for more information:
+  https://d.android.com/r/studio-ui/compose-compiler
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 28s
