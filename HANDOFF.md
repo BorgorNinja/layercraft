@@ -138,6 +138,20 @@ things this session couldn't.
 
 ## CI run log (append new entries here, most recent first)
 
+- **Run 3** (`33753889868`, api_level=28): failed, but not on iconv or
+  anything in the actual build — the workflow run used a version of
+  `native-libs.yml` missing the log-capture steps entirely (confirmed via
+  step list: no "Commit build log" step present). Root cause: the commit
+  that applied the API-28 fix read `native-libs.yml` via
+  `raw.githubusercontent.com` immediately after the prior commit, got a
+  stale CDN-cached pre-log-capture copy, edited that, and pushed it —
+  silently reverting the log-capture steps while keeping the API-28
+  change. **No new information about whether the iconv fix actually
+  works** — this run never got far enough to tell us, its log commit step
+  didn't exist to capture anything anyway. Fixed by re-reading via the
+  Contents API (uncached) and reapplying the log-capture steps on top of
+  the correct current content. See "Conventions worth preserving" below
+  for the rule this violates.
 - **Run 2** (`33736861080`, api_level=26): glib meson build reached actual
   compilation, failed with `Dependency "iconv" not found (tried builtin
   and system)` at `glib/meson.build:2248`. Root cause: bionic's native
@@ -166,11 +180,9 @@ actual blocker is almost always the last `ERROR:`-prefixed line near a
 
 ## Immediate next step
 
-Re-run `native-libs.yml` with `api_level=28` to confirm the iconv fix
-actually clears glib's build (it may not be the only issue — babl/gegl
-haven't been reached yet in any run so far). If it still fails, follow
-"How to read a new failure" above, fix, repeat. Standard iteration loop,
-same as before.
+Re-run `native-libs.yml` with `api_level=28` (run 3 didn't actually test
+this due to the CDN-cache regression above — run 4 is the real test). If
+it still fails, follow "How to read a new failure" above, fix, repeat.
 
 ## Longer-term roadmap (after native build is green)
 
@@ -190,6 +202,15 @@ perspective, text layers).
   with `GET /user` before relying on it.
 - File SHAs for Contents API writes go stale fast — refetch immediately
   before each write if not using the Trees API.
+- **`raw.githubusercontent.com` is CDN-cached (observed ~minutes of lag)
+  — don't use it to read "current" file content immediately after a
+  commit, you can silently get a stale copy and then commit an edit on
+  top of it, reverting the prior change.** This actually happened once in
+  this repo's history (see CI run log below: the API-28 fix was applied
+  on top of a stale copy and briefly reverted the log-capture steps).
+  Use the Contents API (`GET /repos/{repo}/contents/{path}?ref=main`,
+  base64-decode) instead when you need to read back what's actually on
+  the branch right now.
 - When bulk-renaming identifiers (not currently relevant here, but a
   pattern used elsewhere in this account's repos): sort replacements
   longest-first to avoid partial-match corruption.
