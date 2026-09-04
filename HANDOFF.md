@@ -138,6 +138,17 @@ things this session couldn't.
 
 ## CI run log (append new entries here, most recent first)
 
+- **release-alpha run 4** (`33849565342`): **SUCCESS, both jobs.**
+  Compose Compiler plugin fix cleared the Gradle configuration error.
+  `native-engine.cpp`'s real GEGL JNI code compiled and linked against the
+  cross-compiled prefix with no further changes needed. APK built
+  (57.4MB, `arm64-v8a` only, debug-signed) and published:
+  [`v0.1.0-alpha`](https://github.com/BorgorNinja/layercraft/releases/tag/v0.1.0-alpha).
+  **This is "linked" not "verified"** — nobody has installed this APK on
+  a device or emulator yet. `createImageNode`/`applyOp`/`renderToBuffer`
+  compiling successfully says nothing about whether they produce correct
+  output, crash on first call, or work at all at runtime — that's
+  genuinely unknown until someone runs it. See "Immediate next step."
 - **release-alpha run 3** (`33849222581`): native-deps job succeeded again
   (chain is reproducible). `build-apk` job reached the actual Gradle
   build for the first time and failed -- but on something unrelated to
@@ -234,11 +245,24 @@ actual blocker is almost always the last `ERROR:`-prefixed line near a
 
 ## Immediate next step
 
-Re-run `release-alpha.yml` — the Compose Compiler Gradle plugin fix
-hasn't been tested by an actual run yet. If it clears this, the next
-thing to check is whether `native-engine.cpp`'s real GEGL JNI calls
-actually compile/link (that code has never been exercised by a build
-until this point in the pipeline).
+The build/link/release pipeline is fully green — that's a real milestone,
+but don't overstate it. What's actually confirmed: the native chain
+compiles, `native-engine.cpp` links against it, Gradle produces an APK,
+CI publishes it. What's **not** confirmed: that any of it works. Next
+concrete step is installing `v0.1.0-alpha`'s APK on a real device or
+emulator and checking:
+1. Does the app launch at all (does `System.loadLibrary("layercraft_engine")`
+   succeed, or does it crash on missing/mismatched `.so` dependencies —
+   very possible given this links ~6 shared libraries that have never
+   been deployed together before)?
+2. Does `NativeEngine.engineStatus()` return the "gegl-engine" string
+   (confirms JNI bridge + GEGL init work at runtime, not just at link
+   time)?
+3. Only after 1-2 pass: try `createImageNode`/`applyOp`/`renderToBuffer`
+   with real image data and see what happens.
+
+Nobody has done step 1 yet. That's the actual next action, not more CI
+iteration — the pipeline itself has done its job for now.
 
 ## Longer-term roadmap (after native build is green)
 
