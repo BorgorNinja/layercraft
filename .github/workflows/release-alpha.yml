@@ -90,9 +90,6 @@ jobs:
         with:
           gradle-version: "8.7"
 
-      - name: Bootstrap Gradle wrapper
-        run: gradle wrapper --gradle-version 8.7
-
       - name: Determine version
         id: version
         run: |
@@ -103,20 +100,25 @@ jobs:
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
-      - name: Build debug APK
+      - name: Bootstrap wrapper + build debug APK
         id: build_apk
         continue-on-error: true
         run: |
-          if [ -d native-prefix ] && [ "$(ls -A native-prefix 2>/dev/null)" ]; then
-            EXTRA_ARG="-PnativeDepsPrefix=${{ github.workspace }}/native-prefix"
-            echo "Building with GEGL linked ($EXTRA_ARG)"
-          else
-            EXTRA_ARG=""
-            echo "Building stub engine (native-deps job did not produce a prefix)"
-          fi
-          chmod +x gradlew
           set -o pipefail
-          ./gradlew assembleDebug $EXTRA_ARG 2>&1 | tee build-apk.log
+          {
+            gradle wrapper --gradle-version 8.7
+            chmod +x gradlew
+
+            if [ -d native-prefix ] && [ "$(ls -A native-prefix 2>/dev/null)" ]; then
+              EXTRA_ARG="-PnativeDepsPrefix=${{ github.workspace }}/native-prefix"
+              echo "Building with GEGL linked ($EXTRA_ARG)"
+            else
+              EXTRA_ARG=""
+              echo "Building stub engine (native-deps job did not produce a prefix)"
+            fi
+
+            ./gradlew assembleDebug $EXTRA_ARG
+          } 2>&1 | tee build-apk.log
 
       - name: Commit build log on failure (Actions log storage unreachable from review sandbox -- see native-libs.yml for the same pattern)
         if: always()
