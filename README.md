@@ -42,13 +42,14 @@ not portable to Android; GEGL+babl are the extractable, portable core).
 
 ## Roadmap
 
-1. **NDK toolchain for GEGL/babl** — in active iteration, not done. Two
-   real CI runs so far: run 1 needed a log-capture workaround added
-   (Actions log storage is unreachable from the environment developing
-   this); run 2 got into glib's actual meson build and failed on a
-   missing `iconv` dependency at API 26, fixed by bumping to API 28 (see
-   "Known risk areas"). Fix pushed but not yet confirmed by a follow-up
-   run.
+1. ~~**NDK toolchain for GEGL/babl**~~ — **done as of run 6**: the full
+   chain (glib → json-glib → libjpeg-turbo → zlib → libpng → babl → gegl)
+   cross-compiles cleanly for `arm64-v8a`/API 28. Took 6 CI iterations
+   (see HANDOFF.md CI run log for the full debugging arc: log-storage
+   access, iconv/API-level, gegl's undeclared-optional hard deps on
+   libjpeg-turbo/libpng, libpng's zlib.pc gap). Not yet confirmed: that
+   `native-engine.cpp` actually links against this prefix, or that the
+   resulting `.so` works on-device — see item 2.
 2. **JNI surface** — done for a first minimal cut (`createImageNode`,
    `applyOp`, `renderToBuffer`, `releaseNode` in `NativeEngine.kt` /
    `native-engine.cpp`), real GEGL calls written but unrun. Typed param

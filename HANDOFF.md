@@ -138,6 +138,14 @@ things this session couldn't.
 
 ## CI run log (append new entries here, most recent first)
 
+- **Run 6** (`33825293060`, api_level=28): **SUCCESS.** Full chain (glib →
+  json-glib → libjpeg-turbo → zlib → libpng → babl → gegl) cross-compiled
+  cleanly for `arm64-v8a`. `native-prefix-arm64-v8a` artifact uploaded.
+  This is the first fully green native build — six runs to get here (see
+  runs 1-5 below for the debugging arc). Not yet confirmed: whether
+  `native-engine.cpp`'s actual GEGL JNI calls compile/link against this
+  prefix, or whether the resulting `.so` actually loads and runs on a
+  device — those are the next checks, via `release-alpha.yml`.
 - **Run 5** (`33824890039`, api_level=28): confirmed run 4's iconv fix —
   glib and json-glib now build and link cleanly (found via pkg-config).
   New failure: `gegl/meson.build:387` hard-requires `libjpeg`/
@@ -198,9 +206,12 @@ actual blocker is almost always the last `ERROR:`-prefixed line near a
 
 ## Immediate next step
 
-Re-run `native-libs.yml` with `api_level=28` — run 5's fix (zlib +
-libpng + libjpeg-turbo added to the chain) hasn't been tested by an
-actual CI run yet.
+Native chain is green (run 6). Next: trigger `release-alpha.yml` to test
+whether `native-engine.cpp`'s real GEGL JNI calls actually compile/link
+against the prefix (they were written against the API but never
+compiled), and whether the CMake linking config in `CMakeLists.txt` is
+correct end to end. This is a different failure surface than the meson
+chain — expect it to need its own iteration round, same pattern as above.
 
 ## Longer-term roadmap (after native build is green)
 
