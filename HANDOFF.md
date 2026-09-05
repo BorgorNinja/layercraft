@@ -138,6 +138,35 @@ things this session couldn't.
 
 ## CI run log (append new entries here, most recent first)
 
+- **GEGL_PATH/BABL_PATH fix pushed** (commit `9561977`, no CI run yet):
+  after confirming `v0.1.1-alpha` fixed the first packaging gap (below),
+  read `gegl/operations/core/meson.build` directly and found a second,
+  deeper problem: GEGL installs its actual operations (crop, blend modes,
+  blur, etc.) as `shared_module` bundles under `$libdir/gegl-0.4/` — a
+  subdirectory the `-maxdepth 1` jniLibs staging never scanned. Even with
+  that fixed, Android's APK format has no subdirectory structure under
+  `lib/<abi>/`, so GEGL's runtime plugin loader (confirmed via GEGL's own
+  `docs/environment.adoc`: `GEGL_PATH` is "the directory where GEGL looks
+  (recursively) for dynamically loadable operation libraries"; `BABL_PATH`
+  is babl's equivalent) would have nothing to point at even with the
+  files present. Fixed: recursive staging in `build-native-deps.sh`, plus
+  a new explicit `NativeEngine.initEngine(nativeLibDir)` that sets both
+  env vars via `setenv()` before `gegl_init()` runs, called once from
+  `MainActivity.onCreate` with `applicationInfo.nativeLibraryDir`.
+  **Genuinely can't be confirmed by static APK inspection alone this
+  time** — whether `GEGL_PATH` scanning actually registers operations at
+  runtime is real device/emulator behavior, not something `unzip -l` can
+  show. Next CI run should at least confirm the plugin `.so` files are
+  now present in the APK; confirming they're *found* needs a device.
+- **`v0.1.1-alpha` fix confirmed** (run `33933122938`): the jniLibs
+  staging + Gradle `sourceSets` wiring from the previous entry worked —
+  unzipped the resulting APK and found 20 `.so` files in `lib/arm64-v8a/`,
+  including everything previously missing (glib, gegl, babl, json-glib,
+  libjpeg, libpng, zlib, gio, gobject, gmodule, gthread, girepository,
+  libffi, libintl, plus `libgegl-npd-0.4.so`/`libgegl-sc-0.4.so` — two
+  GEGL plugins that happened to install to the flat libdir rather than
+  the `gegl-0.4/` subdir most operations use, which is what led to
+  checking that subdirectory question in the entry above).
 - **Post-run-4 static analysis** (no new CI run, `v0.1.0-alpha` APK
   inspected directly): downloaded the released APK and unzipped it —
   `lib/arm64-v8a/` contained only `liblayercraft_engine.so` (what CMake
@@ -267,25 +296,27 @@ actual blocker is almost always the last `ERROR:`-prefixed line near a
 
 ## Immediate next step
 
-`v0.1.0-alpha` was found (by directly unzipping the APK, not by running
-it) to be **missing all its native `.so` dependencies** — it would have
-failed at launch. Fix is written (jniLibs staging + Gradle sourceSets
-wiring) but **not yet tested by a CI run**. Before doing anything else:
+The GEGL_PATH/BABL_PATH fix (see CI run log above) is pushed but
+**untested by a CI run**. Before anything else:
 1. Re-dispatch `release-alpha.yml`.
-2. Download the resulting APK and unzip `lib/arm64-v8a/` again — confirm
-   glib/gegl/babl/json-glib/libjpeg-turbo/zlib/libpng `.so` files are now
-   present (this can and should be checked without a device, same way
-   the bug was found).
-3. Only once that's confirmed does installing on a real device become
-   the next meaningful step:
-   - Does the app launch at all (does
-     `System.loadLibrary("layercraft_engine")` succeed)?
-   - Does `NativeEngine.engineStatus()` return the "gegl-engine" string?
-   - Only after those two pass: try `createImageNode`/`applyOp`/
-     `renderToBuffer` with real image data.
+2. Download the resulting APK and unzip it — confirm the operation
+   plugin bundles (things like `libgegl-common.so`, `libgegl-core.so`,
+   or however GEGL names its per-subdirectory bundles — check the
+   staging step's logged `find` output in the workflow, or just unzip
+   and look) are now present, not just the ~20 files from `v0.1.1-alpha`.
+   This part is checkable without a device, same way both prior bugs
+   were found.
+3. **Static inspection cannot confirm the actual point of this fix** —
+   whether `GEGL_PATH` scanning at runtime actually registers those
+   operations. That genuinely requires installing the APK on a device or
+   emulator and either: (a) adding a temporary diagnostic call (e.g. one
+   that lists registered GEGL operation names) and checking logcat, or
+   (b) just trying `applyOp("gegl:gaussian-blur", ...)` end-to-end and
+   seeing if it succeeds or logs "operation not found".
 
-Nobody has done step 3 yet. That's the actual next action, not more CI
-iteration — the pipeline itself has done its job for now.
+Steps 1-2 can happen without you. Step 3 needs a device — that's the
+actual point where this stops being something I can keep debugging blind
+from CI logs alone.
 
 ## Longer-term roadmap (after native build is green)
 
