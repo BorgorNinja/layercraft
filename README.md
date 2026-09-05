@@ -16,7 +16,7 @@ and a non-destructive edit graph.
 | UI shell | Kotlin + Jetpack Compose | scaffolded |
 | Canvas / gestures (drag-drop, pinch, reorder) | Compose `PointerInput` + custom `Canvas` | scaffolded |
 | Edit-stack model | Kotlin data classes (`model/`) | scaffolded |
-| Image processing engine | GEGL + babl via JNI (NDK cross-compiled) | **compiles + links, but `v0.1.0-alpha` shipped missing its native deps — packaging fix written, unconfirmed** |
+| Image processing engine | GEGL + babl via JNI (NDK cross-compiled) | **all known packaging bugs fixed (`v0.1.2-alpha`, 69 `.so` files confirmed) — runtime behavior needs a device, unverified** |
 | GPU preview | `RenderEffect` (API 31+) fallback, GLES later | not started |
 | File I/O | Android `BitmapFactory` / `ImageDecoder` now; libjpeg-turbo/skia-codec later | not started |
 
@@ -53,14 +53,19 @@ not portable to Android; GEGL+babl are the extractable, portable core).
    debugging arc: log-storage access, iconv/API-level, gegl's undeclared
    hard deps on libjpeg-turbo/libpng, libpng's zlib.pc gap).
 2. **JNI surface** — `createImageNode`, `applyOp`, `renderToBuffer`,
-   `releaseNode` implemented and confirmed compiling + linking against
-   the real GEGL prefix as of `v0.1.0-alpha`. **That build is known
-   broken at runtime** — inspecting the APK directly showed it's missing
-   all of glib/gegl/babl/etc.'s `.so` files (Gradle's CMake integration
-   doesn't bundle external link-time dependencies automatically). Fix
-   written (jniLibs staging in the build script + Gradle sourceSets
-   wiring), not yet confirmed by a CI run. Typed param handling beyond
-   `gdouble` still needed for ops with non-numeric properties (see risk
+   `releaseNode`, plus a new explicit `initEngine(nativeLibDir)`
+   implemented. Two packaging bugs found by directly unzipping released
+   APKs and fixed: `v0.1.0-alpha` shipped missing all native `.so`
+   dependencies (Gradle doesn't auto-bundle external link-time deps);
+   `v0.1.1-alpha` fixed that but was still missing GEGL's operation
+   plugin bundles (installed to a `gegl-0.4/` subdirectory a maxdepth-1
+   staging script missed). `v0.1.2-alpha` (69 `.so` files, confirmed via
+   APK inspection) has everything static analysis can check for. **What
+   remains is genuinely runtime-only**: whether `GEGL_PATH`/`BABL_PATH`
+   scanning actually registers operations, whether `gegl_init()`
+   succeeds, whether the app launches at all — none of that is knowable
+   without a device or emulator. Typed param handling beyond `gdouble`
+   still needed for ops with non-numeric properties (see risk
    areas) — that's a separate, still-open item regardless of the
    packaging fix.
 3. **Compose canvas wired to native preview buffer** — render GEGL output

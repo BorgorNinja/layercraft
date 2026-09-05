@@ -138,6 +138,23 @@ things this session couldn't.
 
 ## CI run log (append new entries here, most recent first)
 
+- **`v0.1.2-alpha` confirms the recursive-staging half of the fix**
+  (run `33962618497`): unzipped the released APK — 69 `.so` files now
+  present (up from 20 in `v0.1.1-alpha`), including all the previously
+  missing GEGL operation bundles: `gegl-core.so`, `gegl-common.so`,
+  `gegl-common-cxx.so`, `gegl-common-gpl3.so`, `gegl-generated.so`,
+  `gegl-fixups.so` (no `lib` prefix on any of these — matches GEGL's
+  `name_prefix: ''` build config, confirming they really did come from
+  the `gegl-0.4/` subdirectory the recursive `find` was meant to catch,
+  not just re-finding the same flat-libdir files as before). APK grew
+  from ~57MB to 68.8MB, consistent with the added bundles.
+  **What this does NOT confirm**: whether `GEGL_PATH`/`BABL_PATH` are
+  actually picked up correctly at runtime, whether `gegl_init()` finds
+  and successfully loads these bundles via `dlopen`, or whether mixing
+  prefixed (`libgegl-0.4.so`) and non-prefixed (`gegl-core.so`) names in
+  one flat directory confuses GEGL's own module-discovery logic in any
+  way. Static inspection has done everything it usefully can here —
+  confirming the actual point of this fix requires a device or emulator.
 - **GEGL_PATH/BABL_PATH fix pushed** (commit `9561977`, no CI run yet):
   after confirming `v0.1.1-alpha` fixed the first packaging gap (below),
   read `gegl/operations/core/meson.build` directly and found a second,
@@ -296,27 +313,31 @@ actual blocker is almost always the last `ERROR:`-prefixed line near a
 
 ## Immediate next step
 
-The GEGL_PATH/BABL_PATH fix (see CI run log above) is pushed but
-**untested by a CI run**. Before anything else:
-1. Re-dispatch `release-alpha.yml`.
-2. Download the resulting APK and unzip it — confirm the operation
-   plugin bundles (things like `libgegl-common.so`, `libgegl-core.so`,
-   or however GEGL names its per-subdirectory bundles — check the
-   staging step's logged `find` output in the workflow, or just unzip
-   and look) are now present, not just the ~20 files from `v0.1.1-alpha`.
-   This part is checkable without a device, same way both prior bugs
-   were found.
-3. **Static inspection cannot confirm the actual point of this fix** —
-   whether `GEGL_PATH` scanning at runtime actually registers those
-   operations. That genuinely requires installing the APK on a device or
-   emulator and either: (a) adding a temporary diagnostic call (e.g. one
-   that lists registered GEGL operation names) and checking logcat, or
-   (b) just trying `applyOp("gegl:gaussian-blur", ...)` end-to-end and
-   seeing if it succeeds or logs "operation not found".
+**This is now a hard stop for CI-only iteration.** Every packaging bug
+that static APK inspection could find, it found (missing core libs in
+`v0.1.0-alpha`, missing plugin bundles in `v0.1.1-alpha`, both confirmed
+fixed by `v0.1.2-alpha`). What's left — whether `GEGL_PATH` scanning
+actually registers operations at runtime, whether `gegl_init()` succeeds
+or crashes, whether `System.loadLibrary("layercraft_engine")` even
+resolves all 69 `DT_NEEDED` entries correctly — is genuinely runtime-only
+behavior. `unzip -l` cannot tell you any of it.
 
-Steps 1-2 can happen without you. Step 3 needs a device — that's the
-actual point where this stops being something I can keep debugging blind
-from CI logs alone.
+**Actual next step, needs a device or emulator:**
+1. Install `v0.1.2-alpha`'s APK
+   (https://github.com/BorgorNinja/layercraft/releases/tag/v0.1.2-alpha).
+2. Does the app launch, or does it crash immediately (logcat will show
+   `UnsatisfiedLinkError` with the specific missing symbol/library if so
+   — that's still useful debugging information if it happens, just not
+   something I can get without you running it)?
+3. If it launches: what does `NativeEngine.engineStatus()` report? (Not
+   wired into the UI yet — would need a quick Compose text field added,
+   or just check logcat for the `LOGI`/`LOGE` lines `native-engine.cpp`
+   already emits around `gegl_init`.)
+4. Only past that: try an actual `createImageNode` → `applyOp("gegl:gaussian-blur", ...)`
+   → `renderToBuffer` round trip.
+
+I can keep fixing things from logs and static analysis, but this
+particular question needs a runtime.
 
 ## Longer-term roadmap (after native build is green)
 
