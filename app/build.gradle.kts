@@ -8,6 +8,22 @@ android {
     namespace = "com.borgorninja.layercraft"
     compileSdk = 35
 
+    // Package the GEGL/babl/glib/etc. .so files staged by
+    // scripts/build-native-deps.sh at $nativeDepsPrefix/jniLibs/<abi>/.
+    // Without this, only liblayercraft_engine.so (what CMake itself
+    // builds) ends up in the APK -- its external shared-library
+    // dependencies are linked against at build time but never bundled,
+    // which fails at runtime with UnsatisfiedLinkError. Confirmed by
+    // inspecting v0.1.0-alpha's APK contents directly.
+    val nativeDepsPrefixForJniLibs = project.findProperty("nativeDepsPrefix") as String?
+    if (nativeDepsPrefixForJniLibs != null) {
+        sourceSets {
+            getByName("main") {
+                jniLibs.srcDirs(file("$nativeDepsPrefixForJniLibs/jniLibs"))
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.borgorninja.layercraft"
         minSdk = 28

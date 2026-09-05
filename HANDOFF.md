@@ -138,6 +138,28 @@ things this session couldn't.
 
 ## CI run log (append new entries here, most recent first)
 
+- **Post-run-4 static analysis** (no new CI run, `v0.1.0-alpha` APK
+  inspected directly): downloaded the released APK and unzipped it —
+  `lib/arm64-v8a/` contained only `liblayercraft_engine.so` (what CMake
+  itself builds) plus `libc++_shared.so` and an unrelated androidx lib.
+  **None of glib/gegl/babl/json-glib/libjpeg-turbo/zlib/libpng were
+  present.** Root cause: Gradle's CMake integration packages what its own
+  build produces, not the external shared libraries it happened to link
+  against from `NATIVE_DEPS_PREFIX` — those were resolved at link time
+  from a path outside the project and never copied into the APK. This
+  would have failed at runtime with `UnsatisfiedLinkError` on missing
+  `DT_NEEDED` entries the moment `System.loadLibrary("layercraft_engine")`
+  ran, without needing a device to discover it. Fixed by: (1)
+  `build-native-deps.sh` now stages every `*.so*` (symlinks dereferenced
+  via `cp -L`, since meson/libtool installs are a symlink chain like
+  `libfoo.so -> libfoo.so.0 -> libfoo.so.0.0.0` and Android's linker needs
+  real files under each name) into `$PREFIX/jniLibs/$ABI/`; (2)
+  `app/build.gradle.kts` now points `sourceSets.main.jniLibs.srcDirs` at
+  that directory when `nativeDepsPrefix` is set, so Gradle bundles them
+  into the APK alongside the CMake-built engine lib. **Not yet confirmed
+  by a CI run** — this needs a fresh `release-alpha.yml` dispatch and
+  another APK-contents inspection to verify all the expected `.so` files
+  actually show up in `lib/arm64-v8a/` this time.
 - **release-alpha run 4** (`33849565342`): **SUCCESS, both jobs.**
   Compose Compiler plugin fix cleared the Gradle configuration error.
   `native-engine.cpp`'s real GEGL JNI code compiled and linked against the
@@ -245,23 +267,24 @@ actual blocker is almost always the last `ERROR:`-prefixed line near a
 
 ## Immediate next step
 
-The build/link/release pipeline is fully green — that's a real milestone,
-but don't overstate it. What's actually confirmed: the native chain
-compiles, `native-engine.cpp` links against it, Gradle produces an APK,
-CI publishes it. What's **not** confirmed: that any of it works. Next
-concrete step is installing `v0.1.0-alpha`'s APK on a real device or
-emulator and checking:
-1. Does the app launch at all (does `System.loadLibrary("layercraft_engine")`
-   succeed, or does it crash on missing/mismatched `.so` dependencies —
-   very possible given this links ~6 shared libraries that have never
-   been deployed together before)?
-2. Does `NativeEngine.engineStatus()` return the "gegl-engine" string
-   (confirms JNI bridge + GEGL init work at runtime, not just at link
-   time)?
-3. Only after 1-2 pass: try `createImageNode`/`applyOp`/`renderToBuffer`
-   with real image data and see what happens.
+`v0.1.0-alpha` was found (by directly unzipping the APK, not by running
+it) to be **missing all its native `.so` dependencies** — it would have
+failed at launch. Fix is written (jniLibs staging + Gradle sourceSets
+wiring) but **not yet tested by a CI run**. Before doing anything else:
+1. Re-dispatch `release-alpha.yml`.
+2. Download the resulting APK and unzip `lib/arm64-v8a/` again — confirm
+   glib/gegl/babl/json-glib/libjpeg-turbo/zlib/libpng `.so` files are now
+   present (this can and should be checked without a device, same way
+   the bug was found).
+3. Only once that's confirmed does installing on a real device become
+   the next meaningful step:
+   - Does the app launch at all (does
+     `System.loadLibrary("layercraft_engine")` succeed)?
+   - Does `NativeEngine.engineStatus()` return the "gegl-engine" string?
+   - Only after those two pass: try `createImageNode`/`applyOp`/
+     `renderToBuffer` with real image data.
 
-Nobody has done step 1 yet. That's the actual next action, not more CI
+Nobody has done step 3 yet. That's the actual next action, not more CI
 iteration — the pipeline itself has done its job for now.
 
 ## Longer-term roadmap (after native build is green)

@@ -143,3 +143,25 @@ build_meson_project "${WORKDIR}/gegl" \
 echo "Done. Installed to: $PREFIX"
 find "$PREFIX/lib" -maxdepth 1 -name "*.so*" 2>/dev/null || true
 
+# Stage a flat jniLibs/<abi>/ layout so app/build.gradle.kts can bundle
+# every dependency .so into the APK, not just the ones CMake builds
+# directly. Gradle's CMake integration only packages what its own build
+# produces (liblayercraft_engine.so) -- it has no visibility into shared
+# libraries an external prefix was linked against, so without this step
+# the APK links fine but fails at runtime with UnsatisfiedLinkError on
+# missing DT_NEEDED entries (confirmed by inspecting v0.1.0-alpha's APK:
+# it contained only liblayercraft_engine.so + libc++_shared.so, none of
+# glib/gegl/babl/etc).
+#
+# `cp -L` dereferences symlinks: meson/libtool-style installs produce a
+# chain (libfoo.so -> libfoo.so.0 -> libfoo.so.0.0.0), and Android's
+# bionic linker resolves DT_NEEDED entries by filename within the APK's
+# lib/<abi>/ directory, not via the desktop-style symlink chain -- so
+# every name in that chain needs to exist as a real file post-copy, not
+# a symlink that would dangle once moved out of $PREFIX/lib.
+echo "== Staging jniLibs/${ABI} =="
+mkdir -p "${PREFIX}/jniLibs/${ABI}"
+find "$PREFIX/lib" -maxdepth 1 -name "*.so*" -exec cp -L {} "${PREFIX}/jniLibs/${ABI}/" \;
+echo "Staged $(ls "${PREFIX}/jniLibs/${ABI}" | wc -l) files:"
+ls -la "${PREFIX}/jniLibs/${ABI}"
+

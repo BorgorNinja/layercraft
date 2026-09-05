@@ -16,7 +16,7 @@ and a non-destructive edit graph.
 | UI shell | Kotlin + Jetpack Compose | scaffolded |
 | Canvas / gestures (drag-drop, pinch, reorder) | Compose `PointerInput` + custom `Canvas` | scaffolded |
 | Edit-stack model | Kotlin data classes (`model/`) | scaffolded |
-| Image processing engine | GEGL + babl via JNI (NDK cross-compiled) | **compiles + links (`v0.1.0-alpha`) — runtime unverified** |
+| Image processing engine | GEGL + babl via JNI (NDK cross-compiled) | **compiles + links, but `v0.1.0-alpha` shipped missing its native deps — packaging fix written, unconfirmed** |
 | GPU preview | `RenderEffect` (API 31+) fallback, GLES later | not started |
 | File I/O | Android `BitmapFactory` / `ImageDecoder` now; libjpeg-turbo/skia-codec later | not started |
 
@@ -52,13 +52,17 @@ not portable to Android; GEGL+babl are the extractable, portable core).
    runs. Took 6 CI iterations (see HANDOFF.md CI run log for the full
    debugging arc: log-storage access, iconv/API-level, gegl's undeclared
    hard deps on libjpeg-turbo/libpng, libpng's zlib.pc gap).
-2. ~~**JNI surface**~~ — `createImageNode`, `applyOp`, `renderToBuffer`,
-   `releaseNode` implemented and **confirmed compiling + linking**
-   against the real GEGL prefix as of `v0.1.0-alpha`. **Not yet verified
-   at runtime** — nobody has installed the APK and confirmed
-   `System.loadLibrary` succeeds or that any JNI call produces correct
-   output. Typed param handling beyond `gdouble` still needed for ops
-   with non-numeric properties (see risk areas).
+2. **JNI surface** — `createImageNode`, `applyOp`, `renderToBuffer`,
+   `releaseNode` implemented and confirmed compiling + linking against
+   the real GEGL prefix as of `v0.1.0-alpha`. **That build is known
+   broken at runtime** — inspecting the APK directly showed it's missing
+   all of glib/gegl/babl/etc.'s `.so` files (Gradle's CMake integration
+   doesn't bundle external link-time dependencies automatically). Fix
+   written (jniLibs staging in the build script + Gradle sourceSets
+   wiring), not yet confirmed by a CI run. Typed param handling beyond
+   `gdouble` still needed for ops with non-numeric properties (see risk
+   areas) — that's a separate, still-open item regardless of the
+   packaging fix.
 3. **Compose canvas wired to native preview buffer** — render GEGL output
    into a `Bitmap`/`SurfaceTexture` per edit-stack change. Not started —
    `CanvasPreview` in `EditorScreen.kt` is still a placeholder.
@@ -113,6 +117,14 @@ environment this was developed in. It runs in CI instead:
 
 ### Known risk areas (untested — first CI run will likely surface issues here)
 
+- ~~**APK missing native dependency `.so` files**~~ — **found (by
+  inspecting `v0.1.0-alpha`'s APK contents directly, not by running it)
+  and fixed, unconfirmed**: Gradle's CMake integration only packages what
+  its own build produces; it has no visibility into external shared
+  libraries linked via `NATIVE_DEPS_PREFIX`. Fixed by staging a
+  `jniLibs/<abi>/` directory in `build-native-deps.sh` and pointing
+  Gradle's `sourceSets` at it. Needs a fresh release + APK-contents check
+  to confirm.
 - **glib flags for bionic**: `-Dlibmount=disabled -Dselinux=disabled
   -Dxattr=false -Dnls=disabled` are a starting guess for what Android's
   libc doesn't support. May need adjustment.
