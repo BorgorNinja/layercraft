@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,8 +44,7 @@ import com.borgorninja.layercraft.model.BlendMode
 import com.borgorninja.layercraft.model.EditDocument
 import com.borgorninja.layercraft.model.Layer
 import com.borgorninja.layercraft.model.LayerType
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 /**
  * Top-level editor screen: canvas preview (top) + layer panel (bottom,
@@ -86,52 +86,75 @@ fun EditorScreen() {
 @Composable
 private fun CanvasPreview(modifier: Modifier = Modifier) {
     // Temporary runtime diagnostic (not the real canvas -- see roadmap
-    // item 3). Runs a minimal end-to-end GEGL round trip on first
-    // composition and displays the result, since this is the one thing
-    // static APK inspection could never confirm: whether GEGL_PATH
-    // actually let gegl_init() discover its operation plugins at
-    // runtime, not just whether the .so files are present in the APK.
-    var diagnostic by remember { mutableStateOf("Running engine diagnostic...") }
+    // item 3). Runs a minimal end-to-end GEGL round trip and displays
+    // the result, since this is the one thing static APK inspection
+    // could never confirm: whether GEGL_PATH actually let gegl_init()
+    // discover its operation plugins at runtime.
+    //
+    // Structured as checkpoints (state update + short delay before each
+    // risky native call) rather than one lambda that sets the result
+    // once at the end: a native crash (SIGSEGV) can't be caught by
+    // Kotlin's runCatching, so if it crashes again, whatever text is
+    // still on screen when it dies tells us exactly which call crashed
+    // -- no logcat access needed to narrow it down that far.
+    //
+    // Also moved off Dispatchers.Default (a background thread pool) onto
+    // the main thread (LaunchedEffect's default dispatcher), matching
+    // the thread gegl_init() already ran on successfully in
+    // MainActivity.onCreate -- GLib/GObject-based libraries have had
+    // thread-initialization edge cases historically, so this is a cheap
+    // thing to rule out even without confirming it's the actual cause.
+    var diagnostic by remember { mutableStateOf("Starting diagnostic...") }
 
     LaunchedEffect(Unit) {
-        diagnostic = withContext(Dispatchers.Default) {
-            runCatching {
-                val status = NativeEngine.engineStatus()
+        suspend fun checkpoint(text: String) {
+            diagnostic = text
+            withFrameNanos { } // force at least one recomposition/render before continuing
+            delay(30)
+        }
 
-                // 4x4 solid mid-gray RGBA8 test image.
-                val w = 4
-                val h = 4
-                val pixels = ByteArray(w * h * 4) { i ->
-                    if (i % 4 == 3) 0xFF.toByte() else 0x80.toByte()
-                }
+        runCatching {
+            checkpoint("Step 1/5: calling engineStatus()...")
+            val status = NativeEngine.engineStatus()
 
-                val srcNode = NativeEngine.createImageNode(pixels, w, h)
-                if (srcNode < 0) {
-                    return@runCatching "engineStatus: $status\n\ncreateImageNode FAILED (returned -1)"
-                }
-
-                val blurredNode = NativeEngine.applyOp(
-                    srcNode,
-                    "gegl:gaussian-blur",
-                    arrayOf("std-dev-x", "std-dev-y"),
-                    floatArrayOf(1.0f, 1.0f),
-                )
-                if (blurredNode < 0) {
-                    return@runCatching "engineStatus: $status\n\ncreateImageNode OK (handle $srcNode)\napplyOp(gegl:gaussian-blur) FAILED (returned -1)\n-- likely means GEGL_PATH didn't find this operation"
-                }
-
-                val out = NativeEngine.renderToBuffer(blurredNode, w, h)
-                NativeEngine.releaseNode(srcNode)
-                NativeEngine.releaseNode(blurredNode)
-
-                if (out == null) {
-                    "engineStatus: $status\n\ncreateImageNode OK\napplyOp OK (handle $blurredNode)\nrenderToBuffer FAILED (returned null)"
-                } else {
-                    "engineStatus: $status\n\nFULL ROUND TRIP OK:\ncreateImageNode -> applyOp(gegl:gaussian-blur) -> renderToBuffer\nreturned ${out.size} bytes (expected ${w * h * 4})"
-                }
-            }.getOrElse { e ->
-                "ENGINE DIAGNOSTIC CRASHED/THREW:\n${e::class.simpleName}: ${e.message}"
+            checkpoint("engineStatus:\n$status\n\nStep 2/5: creating 4x4 test image node...")
+            val w = 4
+            val h = 4
+            val pixels = ByteArray(w * h * 4) { i ->
+                if (i % 4 == 3) 0xFF.toByte() else 0x80.toByte()
             }
+            val srcNode = NativeEngine.createImageNode(pixels, w, h)
+            if (srcNode < 0) {
+                diagnostic = "engineStatus:\n$status\n\ncreateImageNode FAILED (returned -1)"
+                return@LaunchedEffect
+            }
+
+            checkpoint("engineStatus:\n$status\n\ncreateImageNode OK (handle $srcNode)\n\nStep 3/5: applyOp(gegl:gaussian-blur)...")
+            val blurredNode = NativeEngine.applyOp(
+                srcNode,
+                "gegl:gaussian-blur",
+                arrayOf("std-dev-x", "std-dev-y"),
+                floatArrayOf(1.0f, 1.0f),
+            )
+            if (blurredNode < 0) {
+                diagnostic = "engineStatus:\n$status\n\ncreateImageNode OK\napplyOp(gegl:gaussian-blur) FAILED (returned -1)\n-- likely means GEGL_PATH didn't find this operation"
+                return@LaunchedEffect
+            }
+
+            checkpoint("engineStatus:\n$status\n\ncreateImageNode OK\napplyOp OK (handle $blurredNode)\n\nStep 4/5: renderToBuffer...")
+            val out = NativeEngine.renderToBuffer(blurredNode, w, h)
+
+            checkpoint("Step 5/5: releasing nodes...")
+            NativeEngine.releaseNode(srcNode)
+            NativeEngine.releaseNode(blurredNode)
+
+            diagnostic = if (out == null) {
+                "engineStatus:\n$status\n\ncreateImageNode OK\napplyOp OK\nrenderToBuffer FAILED (returned null)"
+            } else {
+                "engineStatus:\n$status\n\nFULL ROUND TRIP OK:\ncreateImageNode -> applyOp(gegl:gaussian-blur) -> renderToBuffer\nreturned ${out.size} bytes (expected ${w * h * 4})"
+            }
+        }.onFailure { e ->
+            diagnostic = "$diagnostic\n\n--- THREW (JVM exception, not a native crash) ---\n${e::class.simpleName}: ${e.message}"
         }
     }
 

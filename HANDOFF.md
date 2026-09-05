@@ -138,6 +138,29 @@ things this session couldn't.
 
 ## CI run log (append new entries here, most recent first)
 
+- **`v0.1.3-alpha` crashed on device** (person report, no logs available):
+  screen showed "Running engine diagnostic..." then the app crashed --
+  meaning the crash happened somewhere inside the
+  `createImageNode`/`applyOp`/`renderToBuffer` round trip, not before it
+  (that text only appears after `NativeEngine` loads and `initEngine()`
+  already succeeded, per the `v0.1.2-alpha` confirmation). A Kotlin-side
+  `runCatching` can't intercept a native crash (SIGSEGV), so this is
+  consistent with a crash inside the JNI/GEGL call chain itself, not a
+  JVM exception. No logcat access available to see a native backtrace.
+  Two changes made in response, both unconfirmed:
+  1. Moved the diagnostic off `Dispatchers.Default` (background thread
+     pool) onto the main thread (matching the thread `gegl_init()`
+     already ran on successfully in `MainActivity.onCreate`) -- a
+     plausible but unconfirmed hypothesis, not a diagnosed root cause.
+  2. Restructured into checkpoints: update the on-screen text (with a
+     forced `withFrameNanos` + short `delay` to make sure it actually
+     renders) *before* each risky native call, not just once at the end.
+     This means if it crashes again, whatever text is last visible on
+     screen pins down which specific call (`engineStatus`,
+     `createImageNode`, `applyOp`, or `renderToBuffer`) crashed --
+     narrows the search without needing logcat, though logcat would
+     still be far more informative (an actual backtrace) if ever
+     available.
 - **First real device confirmation** (person installed `v0.1.2-alpha` and
   reported back, no CI run — this is the actual milestone this whole CI
   loop was building toward): app **launches successfully** and renders
@@ -337,14 +360,20 @@ actual blocker is almost always the last `ERROR:`-prefixed line near a
 
 ## Immediate next step
 
-Device launch confirmed (see CI run log entry above) — `System.loadLibrary`
-and `initEngine()` both succeed at runtime, no crash. Next: release
-`v0.1.3-alpha` with the new on-canvas diagnostic (real
-`createImageNode`/`applyOp("gegl:gaussian-blur")`/`renderToBuffer` round
-trip, result displayed as text on the canvas) and have the person install
-it and report what the screen shows. This is the actual test of whether
-`GEGL_PATH` scanning worked — everything up to this point only confirmed
-the library *loads*, not that GEGL's operations are *discoverable*.
+`v0.1.3-alpha` crashed (see CI run log entry above) somewhere inside the
+`createImageNode`/`applyOp`/`renderToBuffer` chain, with no logcat access
+to pin down exactly where or why. Released `v0.1.4-alpha` with two
+changes: main-thread execution instead of a background thread pool, and
+checkpointed on-screen progress text so the last-visible line narrows
+down which call crashed even without logs. Have the person install it
+and report exactly what text is on screen when/if it crashes (or if it
+doesn't crash, what the final result says).
+
+**If logcat ever becomes available** (person has/gets access to `adb`,
+even wirelessly), that would be far more valuable than any further
+guess-and-release cycle — a native SIGSEGV backtrace would show the exact
+function and likely the exact cause, rather than needing another
+multi-minute CI round trip to test each hypothesis blind.
 
 Three possible outcomes to watch for once that report comes back:
 - **"FULL ROUND TRIP OK... returned 64 bytes"** — GEGL_PATH worked,
