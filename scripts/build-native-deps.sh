@@ -160,8 +160,22 @@ find "$PREFIX/lib" -maxdepth 1 -name "*.so*" 2>/dev/null || true
 # every name in that chain needs to exist as a real file post-copy, not
 # a symlink that would dangle once moved out of $PREFIX/lib.
 echo "== Staging jniLibs/${ABI} =="
+# RECURSIVE, not maxdepth 1: confirmed via gegl's operations/core/meson.build
+# that GEGL installs its actual operations (crop, load, nop, and -- in
+# other subdirs' meson.build files, not yet individually checked --
+# presumably buffer-source, blend modes, gaussian-blur, etc.) as
+# shared_module bundles under $libdir/gegl-0.4/, not the flat $libdir a
+# maxdepth-1 find would see. babl likely does the same for its own
+# extensions under $libdir/babl-0.1/ (BABL_PATH, see below). Android's APK
+# format has no subdirectory support under lib/<abi>/, so everything gets
+# flattened here regardless of source subdirectory -- this only works
+# because GEGL_PATH/BABL_PATH scanning doesn't require any particular
+# directory structure, just a directory containing the .so files (see
+# NativeEngine.initEngine / native-engine.cpp).
 mkdir -p "${PREFIX}/jniLibs/${ABI}"
-find "$PREFIX/lib" -maxdepth 1 -name "*.so*" -exec cp -L {} "${PREFIX}/jniLibs/${ABI}/" \;
+find -L "$PREFIX/lib" -name "*.so*" -type f -exec cp -Ln {} "${PREFIX}/jniLibs/${ABI}/" \;
 echo "Staged $(ls "${PREFIX}/jniLibs/${ABI}" | wc -l) files:"
 ls -la "${PREFIX}/jniLibs/${ABI}"
+echo "-- Full $PREFIX/lib tree (for the record; not all of this ships) --"
+find -L "$PREFIX/lib" -name "*.so*" | sort
 

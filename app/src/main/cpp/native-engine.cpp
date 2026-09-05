@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <atomic>
+#include <cstdlib>
 
 #define LOG_TAG "layercraft_engine"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -31,14 +32,46 @@ std::once_flag gGeglInitFlag;
 std::mutex gHandleMutex;
 std::unordered_map<jlong, GeglNode *> gHandles;
 std::atomic<jlong> gNextHandle{1};
+std::atomic<bool> gExplicitlyInitialized{false};
 
-void ensureGeglInit() {
-    std::call_once(gGeglInitFlag, [] {
-        // gegl_init wants argc/argv; pass empty. GEGL_QUIET avoids stdout
-        // noise Android doesn't have a terminal for anyway.
+// Real init path: must run BEFORE gegl_init(), since that's when GEGL
+// scans GEGL_PATH to discover its operation plugins. On desktop Linux
+// these env vars have a compiled-in default (a normal install prefix);
+// on Android there is no such default and no directory structure to
+// discover -- every .so (glib, gegl, its bundled operation plugins,
+// babl's extensions) ends up flattened into the same
+// ApplicationInfo.nativeLibraryDir alongside everything else. Confirmed
+// via GEGL's own docs/environment.adoc (GEGL_PATH: "directory where GEGL
+// looks (recursively) for dynamically loadable operation libraries";
+// BABL_PATH is babl's equivalent) and operations/core/meson.build
+// (operations installed as shared_module bundles to $libdir/gegl-0.4,
+// which is exactly what gets flattened away in an Android APK).
+void initEngineImpl(const char *nativeLibDir) {
+    std::call_once(gGeglInitFlag, [nativeLibDir] {
+        setenv("GEGL_PATH", nativeLibDir, 1);
+        setenv("BABL_PATH", nativeLibDir, 1);
         int argc = 0;
         gegl_init(&argc, nullptr);
-        LOGI("gegl_init done");
+        LOGI("gegl_init done, GEGL_PATH/BABL_PATH=%s", nativeLibDir);
+    });
+    gExplicitlyInitialized.store(true);
+}
+
+// Fallback for any caller that reaches a GEGL entry point without having
+// called initEngine first: still calls gegl_init() (so it doesn't crash
+// outright), but without GEGL_PATH set, GEGL registers zero operations --
+// every applyOp() will fail to find its op. Logs loudly so this is
+// obvious in logcat rather than a silent, confusing failure.
+void ensureGeglInit() {
+    if (!gExplicitlyInitialized.load()) {
+        LOGE("GEGL used before initEngine() was called -- GEGL_PATH/BABL_PATH "
+             "not set, operations will not be found. Call NativeEngine.initEngine() "
+             "with context.applicationInfo.nativeLibraryDir first.");
+    }
+    std::call_once(gGeglInitFlag, [] {
+        int argc = 0;
+        gegl_init(&argc, nullptr);
+        LOGI("gegl_init done (fallback path, no GEGL_PATH set)");
     });
 }
 
@@ -63,10 +96,26 @@ void eraseHandle(jlong h) {
 } // namespace
 #endif // LAYERCRAFT_HAVE_GEGL
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_borgorninja_layercraft_engine_NativeEngine_initEngine(
+        JNIEnv *env, jobject, jstring nativeLibDir) {
+#ifdef LAYERCRAFT_HAVE_GEGL
+    const char *dir = env->GetStringUTFChars(nativeLibDir, nullptr);
+    initEngineImpl(dir);
+    env->ReleaseStringUTFChars(nativeLibDir, dir);
+#else
+    (void) env; (void) nativeLibDir;
+    LOGI("initEngine: stub build, no-op");
+#endif
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_borgorninja_layercraft_engine_NativeEngine_engineStatus(JNIEnv *env, jobject) {
 #ifdef LAYERCRAFT_HAVE_GEGL
-    return env->NewStringUTF("gegl-engine v0.1 (GEGL linked, unverified -- not yet run)");
+    bool initialized = gExplicitlyInitialized.load();
+    return env->NewStringUTF(initialized
+        ? "gegl-engine v0.2 (GEGL linked, initEngine() called, GEGL_PATH set -- runtime op availability still unverified)"
+        : "gegl-engine v0.2 (GEGL linked, but initEngine() NOT called yet -- GEGL_PATH unset, operations will not be found)");
 #else
     return env->NewStringUTF("stub-engine v0.1 (no GEGL/babl linked)");
 #endif
