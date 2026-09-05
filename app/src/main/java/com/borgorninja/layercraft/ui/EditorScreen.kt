@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -37,10 +38,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.borgorninja.layercraft.engine.NativeEngine
 import com.borgorninja.layercraft.model.BlendMode
 import com.borgorninja.layercraft.model.EditDocument
 import com.borgorninja.layercraft.model.Layer
 import com.borgorninja.layercraft.model.LayerType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Top-level editor screen: canvas preview (top) + layer panel (bottom,
@@ -81,8 +85,56 @@ fun EditorScreen() {
 
 @Composable
 private fun CanvasPreview(modifier: Modifier = Modifier) {
-    // Placeholder: real implementation renders NativeEngine.renderToBuffer()
-    // output into a Bitmap/ImageBitmap here once the engine is wired up.
+    // Temporary runtime diagnostic (not the real canvas -- see roadmap
+    // item 3). Runs a minimal end-to-end GEGL round trip on first
+    // composition and displays the result, since this is the one thing
+    // static APK inspection could never confirm: whether GEGL_PATH
+    // actually let gegl_init() discover its operation plugins at
+    // runtime, not just whether the .so files are present in the APK.
+    var diagnostic by remember { mutableStateOf("Running engine diagnostic...") }
+
+    LaunchedEffect(Unit) {
+        diagnostic = withContext(Dispatchers.Default) {
+            runCatching {
+                val status = NativeEngine.engineStatus()
+
+                // 4x4 solid mid-gray RGBA8 test image.
+                val w = 4
+                val h = 4
+                val pixels = ByteArray(w * h * 4) { i ->
+                    if (i % 4 == 3) 0xFF.toByte() else 0x80.toByte()
+                }
+
+                val srcNode = NativeEngine.createImageNode(pixels, w, h)
+                if (srcNode < 0) {
+                    return@runCatching "engineStatus: $status\n\ncreateImageNode FAILED (returned -1)"
+                }
+
+                val blurredNode = NativeEngine.applyOp(
+                    srcNode,
+                    "gegl:gaussian-blur",
+                    arrayOf("std-dev-x", "std-dev-y"),
+                    floatArrayOf(1.0f, 1.0f),
+                )
+                if (blurredNode < 0) {
+                    return@runCatching "engineStatus: $status\n\ncreateImageNode OK (handle $srcNode)\napplyOp(gegl:gaussian-blur) FAILED (returned -1)\n-- likely means GEGL_PATH didn't find this operation"
+                }
+
+                val out = NativeEngine.renderToBuffer(blurredNode, w, h)
+                NativeEngine.releaseNode(srcNode)
+                NativeEngine.releaseNode(blurredNode)
+
+                if (out == null) {
+                    "engineStatus: $status\n\ncreateImageNode OK\napplyOp OK (handle $blurredNode)\nrenderToBuffer FAILED (returned null)"
+                } else {
+                    "engineStatus: $status\n\nFULL ROUND TRIP OK:\ncreateImageNode -> applyOp(gegl:gaussian-blur) -> renderToBuffer\nreturned ${out.size} bytes (expected ${w * h * 4})"
+                }
+            }.getOrElse { e ->
+                "ENGINE DIAGNOSTIC CRASHED/THREW:\n${e::class.simpleName}: ${e.message}"
+            }
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -90,10 +142,11 @@ private fun CanvasPreview(modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            "Canvas preview\n(native engine not wired up yet)",
-            color = Color.White.copy(alpha = 0.5f),
+            diagnostic,
+            color = Color.White.copy(alpha = 0.8f),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(24.dp),
         )
     }
 }

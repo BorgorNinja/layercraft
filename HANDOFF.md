@@ -138,6 +138,30 @@ things this session couldn't.
 
 ## CI run log (append new entries here, most recent first)
 
+- **First real device confirmation** (person installed `v0.1.2-alpha` and
+  reported back, no CI run — this is the actual milestone this whole CI
+  loop was building toward): app **launches successfully** and renders
+  the full Compose UI (layer panel, drag handles, opacity sliders,
+  visibility toggles) with no crash. This is a strong signal, not just a
+  "looks fine" — `NativeEngine`'s `init` block runs
+  `System.loadLibrary("layercraft_engine")`, and `MainActivity.onCreate`
+  calls `NativeEngine.initEngine(...)` before anything else renders.
+  Android resolves every `DT_NEEDED` shared-library dependency at
+  `dlopen` time, not lazily — if even one of the 69 bundled `.so` files
+  were missing or ABI-mismatched, this would have crashed immediately
+  with `UnsatisfiedLinkError` instead of rendering. It didn't, which
+  means: the jniLibs packaging fixes (both of them) worked at the actual
+  OS level, and `initEngine()`'s `setenv()` + `gegl_init()` calls ran
+  without crashing. **What this does NOT confirm**: whether
+  `GEGL_PATH` scanning actually registered any operations, since nothing
+  in the current UI calls `engineStatus()`/`createImageNode`/`applyOp` —
+  the canvas is still the static placeholder from the original scaffold.
+  Follow-up: added a temporary diagnostic to `CanvasPreview` that runs a
+  real `createImageNode` → `applyOp("gegl:gaussian-blur")` →
+  `renderToBuffer` round trip and displays the result text directly on
+  the canvas (chosen over asking for `adb logcat` output, since the
+  person may not have that readily available — this way it's just
+  visible on screen after reinstalling). Not yet released or confirmed.
 - **`v0.1.2-alpha` confirms the recursive-staging half of the fix**
   (run `33962618497`): unzipped the released APK — 69 `.so` files now
   present (up from 20 in `v0.1.1-alpha`), including all the previously
@@ -313,31 +337,30 @@ actual blocker is almost always the last `ERROR:`-prefixed line near a
 
 ## Immediate next step
 
-**This is now a hard stop for CI-only iteration.** Every packaging bug
-that static APK inspection could find, it found (missing core libs in
-`v0.1.0-alpha`, missing plugin bundles in `v0.1.1-alpha`, both confirmed
-fixed by `v0.1.2-alpha`). What's left — whether `GEGL_PATH` scanning
-actually registers operations at runtime, whether `gegl_init()` succeeds
-or crashes, whether `System.loadLibrary("layercraft_engine")` even
-resolves all 69 `DT_NEEDED` entries correctly — is genuinely runtime-only
-behavior. `unzip -l` cannot tell you any of it.
+Device launch confirmed (see CI run log entry above) — `System.loadLibrary`
+and `initEngine()` both succeed at runtime, no crash. Next: release
+`v0.1.3-alpha` with the new on-canvas diagnostic (real
+`createImageNode`/`applyOp("gegl:gaussian-blur")`/`renderToBuffer` round
+trip, result displayed as text on the canvas) and have the person install
+it and report what the screen shows. This is the actual test of whether
+`GEGL_PATH` scanning worked — everything up to this point only confirmed
+the library *loads*, not that GEGL's operations are *discoverable*.
 
-**Actual next step, needs a device or emulator:**
-1. Install `v0.1.2-alpha`'s APK
-   (https://github.com/BorgorNinja/layercraft/releases/tag/v0.1.2-alpha).
-2. Does the app launch, or does it crash immediately (logcat will show
-   `UnsatisfiedLinkError` with the specific missing symbol/library if so
-   — that's still useful debugging information if it happens, just not
-   something I can get without you running it)?
-3. If it launches: what does `NativeEngine.engineStatus()` report? (Not
-   wired into the UI yet — would need a quick Compose text field added,
-   or just check logcat for the `LOGI`/`LOGE` lines `native-engine.cpp`
-   already emits around `gegl_init`.)
-4. Only past that: try an actual `createImageNode` → `applyOp("gegl:gaussian-blur", ...)`
-   → `renderToBuffer` round trip.
-
-I can keep fixing things from logs and static analysis, but this
-particular question needs a runtime.
+Three possible outcomes to watch for once that report comes back:
+- **"FULL ROUND TRIP OK... returned 64 bytes"** — GEGL_PATH worked,
+  gaussian-blur was found and ran. This would be the real green light to
+  start roadmap item 3 (wire the actual canvas to render buffer output).
+- **"applyOp(gegl:gaussian-blur) FAILED"** — operation wasn't found;
+  GEGL_PATH scanning didn't work as expected, needs its own debugging
+  round (possible causes: `nativeLibraryDir` path wrong/inaccessible,
+  GEGL's module loader expecting a naming convention the flattened
+  bundle files don't match, `dlopen` restrictions on the directory).
+- **"ENGINE DIAGNOSTIC CRASHED/THREW"** — something segfaults or throws;
+  worth getting logcat output at that point since a Kotlin-side
+  `runCatching` can't catch a native segfault (only JVM exceptions), so
+  this outcome might actually still crash the app rather than showing
+  text — if so, that itself is the signal, and logcat becomes necessary
+  since Compose can't display text after a native crash.
 
 ## Longer-term roadmap (after native build is green)
 
